@@ -1,0 +1,1760 @@
+Table Name,Column Name,OpenBet Logic derivation (Final)
+gold_cnsm_c360.fact_bet_detail,bkey_bet_detail,default||TSN||ticket_component_number||bet_status||date
+gold_cnsm_c360.fact_bet_detail,bkey_ticket,As discussed a CR is to be raised with Veremo for Hashed TSN 
+gold_cnsm_c360.fact_bet_detail,ticket_component_number,"Just a sequential number generated for a bet.. 
+holds no relevance.
+purely on how we generate a sequence number in OB
+Format - XXXXYYYYZZZZ where X is Line, Y is Leg and Z is LegPart all appended with 0 to the lenght of 4. 
+
+e.g. Line - 1, Leg - 3 and LegPart - 20 will be 00001000300020 "
+gold_cnsm_c360.fact_bet_detail,ticket_bet_number,OB - Ticket_bet_Number & Bet_component_Number.xlsx
+gold_cnsm_c360.fact_bet_detail,bet_component_number,OB - Ticket_bet_Number & Bet_component_Number.xlsx
+gold_cnsm_c360.fact_bet_detail,bkey_date,"CAM date will be used 
+We are looking for CAM EOD day data for this for which CR to to raised and it  was discussed it will come in UTC and later cane be converted in AEST by DIVA"
+gold_cnsm_c360.fact_bet_detail,bkey_account,"If  ""bets.accountTrait"" = ""ACCT_TRAIT_ACCOUNT""  
+THEN bet.supportingState.customer.accountNumber
+ELSE NULL"
+gold_cnsm_c360.fact_bet_detail,bkey_customer_id,"trn_c.bkey_customer_id as bkey_customer_id,
+ 
+trn_account joined with the ob_bets via sso.account_number and then joined to the trn_customer via bkey_customer_id
+from all_bets
+    left join {source_trn_account} as  trn_a
+        on all_bets.customer_account_number = trn_a.account_number
+    left join {source_trn_customer} as  trn_c
+        on trn_c.bkey_customer_id = trn_a.bkey_customer_id"
+gold_cnsm_c360.fact_bet_detail,bkey_event,Derived using book identifier and event date
+gold_cnsm_c360.fact_bet_detail,bkey_product,"LOOP(Bet.Leg.LegPart)
+{
+IF(SupportingState.Outcome.categoryRef IN ('GREYHOUNDS', 'HARNESS_RACING', 'VR_HORSE_RACING', 'HORSE_RACING', 'RACING_EXTRAS', 'JOCKEY_CHALLENGE')) THEN
+""SBETR""
+ELSE
+""SBET""
+}"
+gold_cnsm_c360.fact_bet_detail,bkey_financial_jurisdiction,"IF(Bet.accountTrait = """"ACCT_TRAIT_ANONYMOUS"""") THEN bet.state.betSlip.jurisdictions.terminal.regionCode;
+ELSE
+bet.state.betSlip.jurisdictions.account.regionCode;
+"
+gold_cnsm_c360.fact_bet_detail,bkey_outlet,"For Account bets use selling_terminal_name (from CAM) to calculate the bkey_outlet from dvce table , for cashbets use bet.sourceTerminalREF"
+line,bkey_pool_id,Null
+gold_cnsm_c360.fact_bet_detail,bet_status,"Bet Status Logic: 
+bet_status = 'Resolved' : 
+    (b.status in ('ACTIVE','SUSPENDED') and b.is_settled is True ) or ((b.status = 'CASHED_OUT' and b.settled_how = 'C') or (mh.context_ref) = 'BET.BET-CASHOUT')
+bet_status = 'Unresolved':
+    (b.status in ('ACTIVE','SUSPENDED') and b.is_settled is False and b.lines_win = 0 and b.lines_lose = 0)
+bet_status = 'Partially_resolved':
+    (b.status in ('ACTIVE','SUSPENDED') and b.is_settled is False and b.lines_number > b.lines_win + b.lines_lose and (b.lines_win > 0 or b.lines_lose > 0))
+bet_status = 'Cancelled'
+    case when  b.status = 'CANCELED' and b.settled_how = 'M'
+
+Alias : 
+    b --> slvr_crtd_rt_back.veromo_ob_bet
+    mh --> slvr_crtd_rt_back.veromo_ob_message_header
+
+Filters to be applied :
+    Ignore PENDING Status : ( b.status <> 'PENDING') 
+    Ignore CANCELED Status when settled_how is 'S' :  (b.status = 'CANCELED' AND b.settled_how = 'S')"
+gold_cnsm_c360.fact_bet_detail,business_line,"""OpenBet"""
+gold_cnsm_c360.fact_bet_detail,bet_ticket_type,"IF (bet.state.bets.betTypeRef = ""SGL"" &&  bet.state.bets.leg.legSort = ""BB""  ) 
+     THEN 
+         IF SupportingState.Outcome.categoryRef IN   ('GREYHOUNDS', 'HARNESS_RACING', 'VR_HORSE_RACING', 'HORSE_RACING', 'RACING_EXTRAS', 'JOCKEY_CHALLENGE') 
+               THEN SRM
+               ELSE SGM
+         ELSE 
+              ""SGL""
+     ELSE 
+            bet.state.bets.betTypeRef"
+gold_cnsm_c360.fact_bet_detail,ticket_single_or_multi,"IF  ""bet.state.bets.betTypeRef"" = ""SGL"" THEN  'SINGLE' ELSE 'MULTI'"
+gold_cnsm_c360.fact_bet_detail,bet_type_id,SportsMarketTemplate.id
+gold_cnsm_c360.fact_bet_detail,bet_type_name,SportsMarketTemplate.name
+gold_cnsm_c360.fact_bet_detail,cash_digital_channel,NULL
+gold_cnsm_c360.fact_bet_detail,trans_datetime,header.timestamp (in AEST to be converted)
+gold_cnsm_c360.fact_bet_detail,trans_date,header.timestamp (extract date from it)
+gold_cnsm_c360.fact_bet_detail,num_legs,"COUNT(DISTINCT bet.state.bets.leg.legNumber)  
+
+FOR BYOS - count the leg numbers per line ID
+
+//count the number of legNumber as in (bet.state.bets.leg.legNumber)"
+gold_cnsm_c360.fact_bet_detail,leg_bet_type,"legType:
+Bet.leg_type allowed values in the database: 'W' ,'L' ,'S' , 'I' leg_type can be one of: W ---> Win L ---> Place S ---> Split Stake I ---> Identical Stake
+
+For Single, DBL, TBL, ACCn, BYOS Bets:
+IF Bet.leg_type in (""W"") THEN
+      ""Win"";
+
+IF (bet.state.bets.betTypeRef = ""SGL"" && Bet.leg_type in (""L"")) THEN
+      ""Place""; -------------------------------- only for Single bets
+
+PLUS
+
+For EachWay Bets:
+IF (bet.state.bets.betTypeRef = ""SGL"" && Bet.leg_type in (""S"" & ""I"")) THEN
+      ""Each Way"";
+
+SGM/SRM: Below logic
+IF(bet.state.bets.betTypeRef = ""SGL"" &&  Bet.Leg.legSort == ''BB"")
+{
+   IF(SupportingState.Outcome.categoryRef IN ('GREYHOUNDS', 'HARNESS_RACING', 'VR_HORSE_RACING', 'HORSE_RACING', 'RACING_EXTRAS', 'JOCKEY_CHALLENGE') ) THEN 
+                  ""Same Race Multibet"";
+   ELSE 
+                   ""Same Game Multibet"";
+}"
+gold_cnsm_c360.fact_bet_detail,bet_result,"CASE
+IF bet.Settled = N
+THEN bet_result = 'RNI'
+ELSE IF Bet.lines.voided = Bet.lines.number
+     OR payout.refunds = stake.amount
+THEN bet_result = 'RFE'
+ELSE  payout.winnings > 0
+     OR Bet.lines.win >= 1
+THEN bet_result = 'WIN'
+ELSE
+     bet_result = 'LSE'
+END"
+gold_cnsm_c360.fact_bet_detail,bonus_dividend_multiplier,"IF(Bets.tags.code=""PROTOK"") THEN 
+SELECT
+    CASE
+        WHEN LEFT(bets.tag_value, 1) = 'M' THEN SUBSTRING(bets.tag_value, 2, LEN(bets.tag_value) - 1)
+        ELSE Null
+    END AS Dividend_Multiplier"
+gold_cnsm_c360.fact_bet_detail,each_way_ind,"IF(Bet.bet_type_ref IN (""SGL"") && Bet.legType IN (""S"")) THEN 'T'
+ELSE 'F'"
+gold_cnsm_c360.fact_bet_detail,mt_dividend_amount_actual,OB - mt_dividend_amount_actual.xlsx
+gold_cnsm_c360.fact_bet_detail,product_line,"SBET
+SBETR"
+gold_cnsm_c360.fact_bet_detail,bonus_bet_flag,"IF(Bet.Stake.bonusAmount > 0) THEN ""T""
+ELSE ""F"""
+gold_cnsm_c360.fact_bet_detail,promotion_type,"CASE    
+    WHEN bets.tags.code = 'PROTOK' THEN 
+        CASE LEFT(bets.tags.value, 1)
+            WHEN 'M' THEN 'Promotional Bets'
+            WHEN 'T' THEN 'Bonus Bets'
+            ELSE NULL
+END AS promotion_type"
+gold_cnsm_c360.fact_bet_detail,component_result,"case when legpart.result = 'UNRESULTED' then RNI
+          legpart.result = 'VOIDED' then RFE
+          legpart.result = 'LOSE' then LSE
+          legpart.result = 'WIN' then
+          case when ((leg.win_place_ref = 'PLACE' ) or (leg.win_place_ref = 'EACH_WAY'  and leg.result = 'P')) and supportingstate_outcome.place > 1
+          then CONCAT('PL', CAST(supportingstate_outcome.place AS STRING))
+          else 'WIN'
+          END
+end as Component_Result;"
+gold_cnsm_c360.fact_bet_detail,pool_type_name,Null
+gold_cnsm_c360.fact_bet_detail,cash_out_ind,"header.contextRef = (""BET.BET-PARTIAL-CASHOUT"" || ""BET.BET-CASHOUT"")
+&& 
+bets.cashout.cashedOutStake >0 
+CashOut is an optional attribute appear when bets.cashOut.Action = ""CASHOUT"""
+gold_cnsm_c360.fact_bet_detail,mt_leg_cash_out_pay_amount_actual,Bet.Cashout.payout * leg_comp_weight_in_tkt (weight_in_ticket)
+gold_cnsm_c360.fact_bet_detail,live_bet_ind,"live_bet_ind =false;
+
+LOOP(bets.leg.legParts){
+ IF(legParts.isInRunning == true) THEN {
+         live_bet_ind = true;
+        break;
+}
+
+""Typically the bet is considered in-running it at least one leg is in-running"" 
+so, to check all isInRunning attribute in all legParts"
+gold_cnsm_c360.fact_bet_detail,proposition_name,bet.supportingState.outcome.outcomeName
+gold_cnsm_c360.fact_bet_detail,proposition_number,bet.supportingState.outcome.outcomeRef
+gold_cnsm_c360.fact_bet_detail,mt_bet_taken_price_actual,Logic to Be Updated By Mayank
+gold_cnsm_c360.fact_bet_detail,mt_component_market_price,"
+**For EachWay Bets:
+IF (bet.state.bets.legType == ""S"") THEN//Explicitly defined stakes for the Win and Place lines (Split-stake)  {
+        win_component_price = bet.state.bets.Leg.price.decimal;
+        place_component_price = (fixedOddsPlacePriceNumerator/fixedOddsPlacePriceDenominator) + 1;
+}
+
+**Component can be mapped to Leg/LegPart considering SGM/SRM scenarios.
+IF(Bet.Leg.legSort == ''BB"") THEN  --SGM/SRM
+       bet.state.bets.Leg.LegParts.price.decimal;
+ELSE
+       bet.state.bets.Leg.price.decimal;"
+gold_cnsm_c360.fact_bet_detail,mt_weight_in_ticket_actual,OB - Weight_in_Ticket.xlsx
+gold_cnsm_c360.fact_bet_detail,bundle_effv_price,Null
+gold_cnsm_c360.fact_bet_detail,bundle_init_price,Null
+gold_cnsm_c360.fact_bet_detail,ticket_cost_amount,Null
+gold_cnsm_c360.fact_bet_detail,eco_offer_amt,Null
+gold_cnsm_c360.fact_bet_detail,eco_cust_div_liab,Null
+gold_cnsm_c360.fact_bet_detail,mt_bet_revenue_amount_actual,"case when is_settled = true then
+stake_amount/no_of_combinations- payout_refunds - mt_dividend_amount_actual
+else 0 end as mt_bet_revenue_amount_actual"
+gold_cnsm_c360.fact_bet_detail,mt_weight_in_bet_actual,OB - Weight_in_Bet.xlsx
+gold_cnsm_c360.fact_bet_detail,mt_bet_turnover,OB_bet_turnover.xlsx
+gold_cnsm_c360.fact_bet_detail,mt_turnover_amount_actual,"mt_leg_decided_amount (decided_ctb) - mt_leg_refund_amount 
+
+decided_ctb = stake_amount* weight_in_ticket"
+gold_cnsm_c360.fact_bet_detail,mt_revenue_amount_actual,"case
+                when bet_status in ( 'Resolved', 'Parially Resolved')              
+                    nvl(mt_leg_decided_amt, 0)
+                    - nvl(mt_leg_refund_Amt, 0)
+                    - nvl(mt_dividend_amount_actual, 0)
+            end as mt_revenue_amount_actual else 0"
+gold_cnsm_c360.fact_bet_detail,mt_revenue_net_amount_actual,"case when bet_status  in (Resolved, Partially Resolved)
+then mt_leg_decided_amount - mt_leg_refund_amount - mt_dividend_amount_actual - mt_generosity_multiplier_dividend_amount_actual - mt_generosity_bonus_bet_redemption_amount_actual
+else 0 end as revenue_net_amt "
+gold_cnsm_c360.fact_bet_detail,mt_generosity_amount_actual,"nvl(mt_generosity_multiplier_dividend, 0)
+    + nvl(mt_generosity_bonus_bet_redemption_amount_actual, 0)
+    + mt_generosity_cashback_amount_actual"
+gold_cnsm_c360.fact_bet_detail,mt_generosity_bonus_bet_redemption_amount_actual,"case when bet_status  in (Resolved, Partially Resolved) 
+then (
+    case
+        when
+            clp_flg = 'T'  -- Promotional Ticket Indicator, SET TO TRUE if Promotional Component Record is present. Need to ask Supriya if it exists in OB?
+            and substr(cam.clp_offer_code, 1, 1)  = 'T'  
+            and nvl(substring(cam.clp_offer_code, 2, 8), '')
+            not in ('TREWARDS', 'RWDTRANS')
+        then
+            mt_leg_decided_amount - round(
+                nvl(bbo_stake_reclaimed_value, 0)  --- 
+                * weight_in_ticket,
+                6
+            )
+        else 0
+    end
+)
+else 0 
+"
+gold_cnsm_c360.fact_bet_detail,mt_generosity_multiplier_dividend_amount_actual,"STEP 1: 
+select
+    serial_number_hashed,
+    sum(
+        (
+            case
+                transaction_type_code
+                when 'PAYM'
+                then amount
+                when 'UPYM'
+                then (- amount)
+                else 0
+            end
+        )
+    ) as bonus_div_amt
+from curr_rt_cam_transaction group by serial_number_hashed
+
+STEP 2: 
+case when bet_Status in (Resolved and Partiall Resolved)
+then bonus_div_amt 
+else 0
+
+STEP
+bonus_div_amt * weight_in_ticket = bonus_div_amt_mg"
+gold_cnsm_c360.fact_bet_detail,mt_generosity_cashback_amount_actual,0
+gold_cnsm_c360.fact_bet_detail,mt_sales_amount_actual,OB - mt_leg_investment_amount.xlsx
+gold_cnsm_c360.fact_bet_detail,mt_leg_refund_amount,"Resolved- bet.status = ""Active"" && bet.isSettled=""true""  -- THEN
+Bet.Payout.refunds ELSE 0; 
+https://mytabcorp.sharepoint.com/:x:/s/FixedOddsNextGeneration/IQC6mwqsLM_iS4EjHL8HfhjZATwb430X-KmQDruHot-RO_U?e=MeZrGi"
+gold_cnsm_c360.fact_bet_detail,mt_cash_out_amount_actual,Null
+gold_cnsm_c360.fact_bet_detail,mt_leg_decided_amount,OB - mt_leg_decided_amount
+gold_cnsm_c360.fact_bet_detail,mt_leg_investment_amount,OB - mt_leg_investment_amount.xlsx
+gold_cnsm_c360.fact_bet_detail,mt_leg_commission_amount,Null
+gold_cnsm_c360.fact_bet_detail,mt_leg_fraction_amount,Null
+gold_cnsm_c360.fact_bet_detail,ts_num_games_in_bet,Null
+gold_cnsm_c360.fact_bet_detail,ts_first_game_in_bet,Null
+gold_cnsm_c360.fact_bet_detail,ts_last_game_in_bet,Null
+gold_cnsm_c360.fact_bet_detail,ts_num_games_decided_sameday,Null
+gold_cnsm_c360.fact_bet_detail,ts_game_number_in_ticket,Null
+gold_cnsm_c360.fact_bet_detail,ts_quickpick_ind,Null
+gold_cnsm_c360.fact_bet_detail,ts_num_combs_per_game,Null
+gold_cnsm_c360.fact_bet_detail,ts_is_game_decided_ind,Null
+gold_cnsm_c360.fact_bet_detail,ts_first_place_winner,Null
+gold_cnsm_c360.fact_bet_detail,ts_second_place_winner,Null
+gold_cnsm_c360.fact_bet_detail,ts_third_place_winner,Null
+gold_cnsm_c360.fact_bet_detail,ts_fourth_place_winner,Null
+gold_cnsm_c360.fact_bet_detail,mt_leg_stake_reclaimed_amount,"-- mt_leg_stake_reclaimed_amount
+case when bet_Status not in (SellTicket) 
+    then
+        round( nvl(bbo_stake_reclaimed_value, 0) * leg_comp_weight_in_tkt, 6) -- bbo_stake_reclaimed_value calcualted in mt_revenue_net_amount_actual column 
+    else 0
+end as leg_stake_reclaimed_amount
+
+
+
+with cam_trx_data as (
+select
+            serial_number_hashed,
+            sum(
+                (E77
+                    case
+                        transaction_type_code
+                        when 'PAYM'
+                        then amount
+                        when 'UPYM'
+                        then (- amount)
+                        else 0
+                    end
+                )
+            ) as bonus_div_amt,
+           max(
+            case
+                when substring(transaction_timestamp, 21, 3) >= 500 
+                then
+                    date_trunc(
+                        'second',
+                        timestampadd(second, 1, transaction_timestamp)
+                    )
+                else 
+                    date_trunc('second', transaction_timestamp)
+            end
+            ) as transaction_timestamp,
+            max(promotion_identifier_string) as clp_offer_code
+        from dev.gold_ntgt_back.curr_rt_cam_transaction
+        where
+            serial_number_hashed
+            in (select distinct tsn from dev.slvr_crtd_rt_back.ob_bet)  -- openbet
+        group by serial_number_hashed
+),
+
+cam_txn_bbo_calculation as (
+
+select
+      promotion_identifier_string,
+            sum(
+                case
+                    when
+                        promotion_identifier_string is not null
+                        and (transaction_type_code = 'ADJ')
+                    then
+                        (
+                            case
+                                coalesce(
+                                    deposit_type_adjust_reason_code, payment_type_code
+                                )
+                                when 'BTS'
+                                then amount
+                                when 'BTSR'
+                                then - amount
+                                else 0
+                            end
+                        )
+                    else 0
+                end
+            ) as bbo_stake_reclaimed_value
+      from dev.gold_ntgt_back.curr_rt_cam_transaction
+      where promotion_identifier_string in (select distinct clp_offer_code from cam_trx_data)
+      group by promotion_identifier_string 
+),
+
+cam_txn_cam_bbo_joined as (
+  select cam_txn.* , cam_bbo.bbo_stake_reclaimed_value  
+  from 
+  cam_trx_data cam_txn 
+  left outer join cam_txn_bbo_calculation cam_bbo
+  on (cam_txn.clp_offer_code = cam_bbo.promotion_identifier_string )
+),
+
+transaction_cam_data as (
+        /* Joins the Transctional data with CAM data on ticket_id and Business_Date */
+        select
+            t.*,            E85
+            substr(clp_offer_code, 1, 1) as clp_offer_type,
+            substr(clp_offer_code, 2, 13) as clp_campaign_code,
+            substring(clp_offer_code, 2, 8) as clp_campaign_descr,
+            (
+                case
+                    when
+                        substr(clp_offer_code, 1, 1) in ('T', 'O')
+                        and (
+                             bet_Status in ('Cancelled', 'Sell Ticket')
+                            or bet_status in ('Resolved'))
+                    then bbo_stake_reclaimed_value
+                    else 0
+                end
+            ) as bbo_stake_reclaimed_value
+        from dev.slvr_crtd_rt_back.ob_bet t  -- ob_bet_detail which have status defined
+        left join
+            cam_txn_cam_bbo_joined c
+            on t.tsn = c.serial_number_hashed
+            and to_date(t.D77F84header_timestamp) -- WE must use business DATE FROM CAM EOD
+            between cast(
+                date_trunc('day', timestampadd(day, -1, c.transaction_timestamp)) as date) 
+                and cast(date_trunc('day', timestampadd(day, 365, c.transaction_timestamp)) as date)
+    )
+select * from transaction_cam_data"
+gold_cnsm_c360.fact_bet_detail,sell_bus_date,"coalesce(creation_date,bkey_date0"
+gold_cnsm_c360.fact_bet_detail,bet_leg_settle_datetime,Null
+gold_cnsm_c360.fact_bet_detail,retail_loyalty_card_number,Null
+gold_cnsm_c360.fact_bet_detail,funding_type_desc,"IF accountTrait == ""ACCT_TRAIT_ACCOUNT"" THEN
+""TAB Account""
+ELSE
+   from ""Cash""
+END"
+gold_cnsm_c360.fact_bet_detail,device_name,all_bets.dvce_name
+gold_cnsm_c360.fact_bet_detail,device_type_name,all_bets.dvce_type_mnem
+gold_cnsm_c360.fact_bet_detail,sub_outl_window,"bet.state.bets.source.terminalRef for cash bets
+and selling_terminal_name from CAM for account bets"
+gold_cnsm_c360.fact_bet_detail,ticket_type_name,Null
+gold_cnsm_c360.fact_bet_detail,num_sport_types,Count (sports_category.name)
+gold_cnsm_c360.fact_bet_detail,last_resolved_leg_ind,"(lower(r_bets.status) in ('active','suspended') and r_bets.is_settled =  true and (r_bets.lines_number = r_bets.lines_win+r_bets.lines_lose+r_bets.lines_voided)) or ( (lower(r_bets.status) = 'cashed_out' and settled_how = 'C') or (context_ref) = 'BET.BET-CASHOUT')"
+gold_cnsm_c360.fact_bet_detail,is_bet_decided_ind,"IF bets.isSettled = ""T"" ELSE ""F"""
+gold_cnsm_c360.fact_bet_detail,flexi_bet_ind,"
+IF(Bet.betTypeRef==""BYOS"") THEN true
+ELSE false;"
+gold_cnsm_c360.fact_bet_detail,gid_terminal_num,same as sub_outlet_window
+gold_cnsm_c360.fact_bet_detail,bundle_num_in_bet,Null
+gold_cnsm_c360.fact_bet_detail,bundle_result,Null
+gold_cnsm_c360.fact_bet_detail,bet_host_id,"CASE (bet.state.betSlip.jurisdictions.account.regionCode)
+        WHEN 'VIC' THEN 'VIC-BV'
+        WHEN 'ACT' THEN 'VIC-BV'
+        WHEN 'NSW' THEN 'NSW-BV'
+        ELSE             'QLD-BV'         
+    END AS bet_host_id"
+gold_cnsm_c360.fact_bet_detail,cash_out_percentage,"	
+= (original_stake - stake) / Original Stake"
+gold_cnsm_c360.fact_bet_detail,tdw_cash_out_actual_amt,NULL
+gold_cnsm_c360.fact_bet_detail,is_bet_cancelled_ind,"IF Bet.Status=""CANCELLED"" && SettledHow = ""M"" THEN ""Y""
+ELSE ""N"""
+gold_cnsm_c360.fact_bet_detail,md_source_system_code,"""OpenBet"""
+gold_cnsm_c360.fact_bet_detail,md_insert_datetime,Metadata column derivation from ETL
+gold_cnsm_c360.fact_bet_detail,account_number,"
+bet.supportingState.customer.accountNumber
+"
+gold_cnsm_c360.fact_bet_detail,customer_number,From account number we will derive the Customer Number From CAM
+gold_cnsm_c360.fact_bet_detail,octs_account_number,Null
+gold_cnsm_c360.dim_event,bkey_event,Derived using book identifier and event date
+gold_cnsm_c360.dim_event,event_name,sport_event.name
+gold_cnsm_c360.dim_event,contest_name,sport_event.name
+gold_cnsm_c360.dim_event,tournament_name,sport_class.name
+gold_cnsm_c360.dim_event,competition_name, sport_type.name
+gold_cnsm_c360.dim_event,sport_name,sport_category.category_name
+gold_cnsm_c360.dim_event,event_date,sport_event.start_date
+gold_cnsm_c360.dim_event,event_number,Null
+gold_cnsm_c360.dim_event,meeting_start_date,Null
+gold_cnsm_c360.dim_event,fo_book_code,sport_market.group_code
+gold_cnsm_c360.dim_event,fo_book_name,sport_market.name
+gold_cnsm_c360.dim_event,round_name,Null
+gold_cnsm_c360.dim_event,sport_code,"CASE
+WHEN sport_name = Horse Racing THEN TR
+WHEN sport_name = Harness Racing THEN HR
+WHEN sport_name = Greyhound  THEN GR
+ELSE Null
+END as sport_code"
+gold_cnsm_c360.dim_event,meeting_result_date,Null
+gold_cnsm_c360.dim_event,advertised_start_time,Null
+gold_cnsm_c360.dim_event,event_close_betting_time,Null
+gold_cnsm_c360.dim_event,event_venue_name,Null
+gold_cnsm_c360.dim_event,meeting_vots,Null
+gold_cnsm_c360.dim_event,meeting_mnem,Null
+gold_cnsm_c360.dim_event,meeting_end_date,Null
+gold_cnsm_c360.dim_event,event_non_tab_ind,Null
+gold_cnsm_c360.dim_event,number_of_acceptances,Null
+gold_cnsm_c360.dim_event,meeting_number_of_events_scheduled,Null
+gold_cnsm_c360.dim_event,meeting_number_of_events_abandoned,Null
+gold_cnsm_c360.dim_event,meeting_total_number_of_events,Null
+gold_cnsm_c360.dim_event,meeting_track_surface_condition,Null
+gold_cnsm_c360.dim_event,starting_field_size,Null
+gold_cnsm_c360.dim_event,meeting_weather,Null
+gold_cnsm_c360.dim_event,region_name,Null
+gold_cnsm_c360.dim_event,region_type_name,Null
+gold_cnsm_c360.dim_event,event_tv_coverage_code,Null
+gold_cnsm_c360.dim_event,event_tv_coverage_description,Null
+gold_cnsm_c360.dim_event,feed_provided_indicator,"CASE 
+WHEN ob_external_system.provider IS NOT NULL 
+THEN TRUE
+ELSE FALSE
+END AS feed_provided_indicator"
+gold_cnsm_c360.dim_event,feed_managed_flag,"CASE
+WHEN feed_provided_indicator is TRUE
+THEN TRUE
+ELSE FALSE
+END AS feed_managed_flag"
+gold_cnsm_c360.dim_event,feed_resulted_indicator,"CASE
+WHEN feed_provided_indicator is TRUE
+THEN TRUE
+ELSE FALSE
+END AS feed_resulted_indicator"
+gold_cnsm_c360.dim_event,contest_sport_code,sport_category.id
+gold_cnsm_c360.dim_event,contest_sport_name,sport_category.name
+gold_cnsm_c360.dim_event,event_date_actual,Null
+gold_cnsm_c360.dim_event,event_scheduled_date,Null
+gold_cnsm_c360.dim_event,event_distance,Null
+gold_cnsm_c360.event_cmnevent_rel,bkey_event,"concat_ws('||','openbet',category.id,class.id,event.id,market.id,to_date(event.start_time)) as bkey_event"
+gold_cnsm_c360.event_cmnevent_rel,bkey_cmnevent,Null
+gold_cnsm_c360.event_cmnevent_rel,flow_type,OpenBet
+gold_cnsm_c360.event_cmnevent_rel,md_insert_datetime,Metadata column derivation from ETL
+gold_cnsm_c360.fact_account_trans,bkey_account,bets.customer_account_number as bkey_account
+gold_cnsm_c360.fact_account_trans,account_number,bets.customer_account_number as account_number
+gold_cnsm_c360.fact_account_trans,bkey_customer_id,trn_c.bkey_customer_id as bkey_customer_id
+gold_cnsm_c360.fact_account_trans,customer_number,trn_c.customer_number as customer_number
+gold_cnsm_c360.fact_account_trans,bkey_financial_jurisdiction,"Case 
+      when bets.account_trait= 'ACCT_TRAIT_ANONYMOUS' then concat_ws('||','default',bets.jurisdictions_terminal_region_code)
+      else concat_ws('||','default',bets.jurisdictions_account_region_code)
+  end as bkey_financial_jurisdiction"
+gold_cnsm_c360.fact_account_trans,business_date,bets.cam_race_date as business_date
+gold_cnsm_c360.fact_account_trans,bkey_ticket,sha1(bets.tsn) as bkey_ticket
+gold_cnsm_c360.fact_account_trans,transaction_datetime,header.timestamp (in AEST to be converted)
+gold_cnsm_c360.fact_account_trans,adjustment_reason_code,Null
+gold_cnsm_c360.fact_account_trans,adjustment_reason_description,Null
+gold_cnsm_c360.fact_account_trans,account_balance_adjustment_factor,"case
+    when lower(bets.bet_status) = 'cancelled' then 1 
+    else -1
+  end as account_balance_adjustment_factor"
+gold_cnsm_c360.fact_account_trans,source_system_id,cast('4' as int) as source_system_id
+gold_cnsm_c360.fact_account_trans,source_system_name,"""OpenBet"""
+gold_cnsm_c360.fact_account_trans,transaction_method_code,Null
+gold_cnsm_c360.fact_account_trans,transaction_method_id,Null
+gold_cnsm_c360.fact_account_trans,device_id,bets.dvce_id as  device_id
+gold_cnsm_c360.fact_account_trans,device_type_code,bets.dvce_type_mnem as device_type_code
+gold_cnsm_c360.fact_account_trans,device_type_description," For Digital account Bets : (CASE WHEN floor(sub_outl_window/1000) BETWEEN 20001 AND 29999 THEN ' ABC Telephone Betting Terminal'   
+            WHEN floor(sub_outl_window/1000) BETWEEN 30001 AND 39999 THEN 'iBeacon'  
+            ELSE                                                            'Mobile Phone'
+       END) AS device_type_description"
+gold_cnsm_c360.fact_account_trans,bkey_outlet,bets.bkey_outlet as bkey_outlet
+gold_cnsm_c360.fact_account_trans,funding_type_description,"IF(Bet.accountTrait == ""ACCT_TRAIT_ACCOUNT"") THEN 
+TAB Account
+ELSE
+CASH"
+gold_cnsm_c360.fact_account_trans,payer_id,Null
+gold_cnsm_c360.fact_account_trans,product_line_code,"IF(SupportingState.Outcome.categoryRef IN ('GREYHOUNDS', 'HARNESS_RACING', 'VR_HORSE_RACING', 'HORSE_RACING', 'RACING_EXTRAS', 'JOCKEY_CHALLENGE')) THEN
+""SBETR""
+ELSE
+""SBET"""
+gold_cnsm_c360.fact_account_trans,promotion_loyalty_campaign_code,Null
+gold_cnsm_c360.fact_account_trans,promotion_loyalty_flag,Null
+gold_cnsm_c360.fact_account_trans,promotion_loyalty_offer_code,Null
+gold_cnsm_c360.fact_account_trans,retail_loyalty_account_number,Null
+gold_cnsm_c360.fact_account_trans,source_transaction_type_id,"case 
+    when lower(bet_status) = 'cancelled' then 23
+    else 2
+  end as source_transaction_type_id,"
+gold_cnsm_c360.fact_account_trans,source_transaction_type_description,"if source_transaction_type_id = 23 then Cancel Sell Bet 
+if source_transaction_type_id = 2 then Sell Bet"
+gold_cnsm_c360.fact_account_trans,transaction_type_description,"if source_transaction_type_id = 23 then Fixed Odds Bet - Cancel
+if source_transaction_type_id = 2 then Fixed Odds Bet - Sell"
+gold_cnsm_c360.fact_account_trans,transaction_id,Null
+gold_cnsm_c360.fact_account_trans,mt_customer_transaction_amount,bet.state.bets.stake.amount (Original)
+gold_cnsm_c360.fact_account_trans,mt_cash_generosity_amount_actual,Null
+gold_cnsm_c360.fact_account_trans,mt_cash_generosity_amount_adj,Null
+gold_cnsm_c360.fact_account_trans,outlet_code,"For Account bets use selling_terminal_name (from CAM) to calculate the bkey_outlet from dvce table , for cashbets use bet.sourceTerminalREF"
+gold_cnsm_c360.fact_account_trans,outlet_id,"bet.state.bets.source.terminalRef
+bet.state.posState.PosCollection.source.terminalRef"
+gold_cnsm_c360.fact_account_trans,outlet_name,dim_venue table joining with the outetcode calcuated in fact_account_trans
+gold_cnsm_c360.fact_account_trans,distribution_channel,outlet_code to be joined with the trn_outlet to get distribution channel column
+gold_cnsm_c360.fact_account_trans,sales_type_name,bet.state.bets.source.channelRef 
+gold_cnsm_c360.fact_account_trans,financial_jurisdiction,"IF(Bet.accountTrait == """"ACCT_TRAIT_ANONYMOUS"""") THEN bet.state.betSlip.jurisdictions.terminal.regionCode;
+ELSE
+bet.state.betSlip.jurisdictions.account.regionCode;
+"
+gold_cnsm_c360.fact_account_trans,md_insert_datetime,Metadata column derivation from ETL
+gold_core_wagering_ads.fact_dw_transaction,ticket_id,"sha1(concat_ws('||',bets.id,bets.md_bronze_openbet_bets_pk,header_business_date,bet_status)) as ticket_id"
+gold_core_wagering_ads.fact_dw_transaction,bus_date,cam_race_date as bus_date
+gold_core_wagering_ads.fact_dw_transaction,ticket_status,Null
+gold_core_wagering_ads.fact_dw_transaction,tran_status,Null
+gold_core_wagering_ads.fact_dw_transaction,tran_amt,"coalesce(bets.cashout_stake_total,0)+bets.stake_amount as tran_amt"
+gold_core_wagering_ads.fact_dw_transaction,tran_datetime,header.timestamp (convert in AEST)
+gold_core_wagering_ads.fact_dw_transaction,ticket_type,bet.state.bets.betTypeRef
+gold_core_wagering_ads.fact_dw_transaction,dw_tran_type_id,Null
+gold_core_wagering_ads.fact_dw_transaction,acc_num,"If  ""bets.accountTrait"" = ""ACCT_TRAIT_ACCOUNT""  
+THEN bet.supportingState.customer.accountNumber
+ELSE NULL"
+gold_core_wagering_ads.fact_dw_transaction,source_sys_tran_id,Null
+gold_core_wagering_ads.fact_dw_transaction,num_bets_in_sell_tkt,Null
+gold_core_wagering_ads.fact_dw_transaction,num_bets_in_tkt,bets.lines_number as num_bets_in_tkt
+gold_core_wagering_ads.fact_dw_transaction,num_selections_in_tkt,Null
+gold_core_wagering_ads.fact_dw_transaction,dvce_id,Null
+gold_core_wagering_ads.fact_dw_transaction,dw_bet_category_id,Null
+gold_core_wagering_ads.fact_dw_transaction,dw_deposit_type_id,Null
+gold_core_wagering_ads.fact_dw_transaction,dw_financial_domain_id,Null
+gold_core_wagering_ads.fact_dw_transaction,dw_intercept_bet_id,Null
+gold_core_wagering_ads.fact_dw_transaction,dw_source_sys_id,Null
+gold_core_wagering_ads.fact_dw_transaction,dw_transaction_id,"cast(row_number() over (partition by header_business_date order by id) + 700000000 as decimal (12,0) ) as dw_transaction_id"
+gold_core_wagering_ads.fact_dw_transaction,bbo_stake_reclaimed_value,Null
+gold_core_wagering_ads.fact_dw_transaction,bonus_div_multiplier," case 
+    when (lower(tag_code) = 'protok') and (left(tag_value,1) = 'M') then substring(tag_value,2,len(tag_value)-1)
+    else Null
+  end as bonus_div_multiplier"
+gold_core_wagering_ads.fact_dw_transaction,cash_out_datetime,"case 
+when lower(bet_status) = 'resolved' then to_timestamp(csh_out.cashed_out_datetime,'yyyy-MM-dd HH:mm:ss')
+else Null
+end as cash_out_datetime,"
+gold_core_wagering_ads.fact_dw_transaction,cash_out_ind,"(context_ref in ('BET.BET-PARTIAL-CASHOUT','BET.BET-CASHOUT') ) and (csh_out.cashed_out_stake > 0)
+its cash_out_ind is flagged true for all current and future entries at"
+gold_core_wagering_ads.fact_dw_transaction,cash_out_percentage,Null
+gold_core_wagering_ads.fact_dw_transaction,clp_offer_type,Null
+gold_core_wagering_ads.fact_dw_transaction,community,Null
+gold_core_wagering_ads.fact_dw_transaction,dividend_amt,"  case 
+        when (lower(all_bets.bet_status)='resolved' and all_bets.line_result = 'W' and all_bets.payout_refund<0) then all_bets.payout_winnings 
+        else 0
+    end as bet_dividend_amt"
+gold_core_wagering_ads.fact_dw_transaction,dvce_addr_part_1_num,Null
+gold_core_wagering_ads.fact_dw_transaction,dvce_addr_part_2_num,Null
+gold_core_wagering_ads.fact_dw_transaction,expected_return,bet.state.bets.payout.potential || bet.state.bets.payout.maxPayout
+gold_core_wagering_ads.fact_dw_transaction,flexi_bet_ind,"
+IF(Bet.betTypeRef==""BYOS"") THEN true
+ELSE false;"
+gold_core_wagering_ads.fact_dw_transaction,flexi_percentage,"//Super Multi Bets are Felxi Bets for Tabcorp
+
+Flexi Percentage = (Investment per 
+potential outcome) X 100%
+
+IF(bet.state.bets.betTypeRef = ""BYOS"") THEN {
+[Bet Amount(row 34) / Total no of Lines (bet.state.bets.lines.number)] * 100%  
+}
+
+Verified the data against SM scenarion in this sheet with the ""Super Multi Calculation"" excel - ""Flexi Percentage"""
+gold_core_wagering_ads.fact_dw_transaction,foreign_acct_num,Null
+gold_core_wagering_ads.fact_dw_transaction,foreign_ind,Null
+gold_core_wagering_ads.fact_dw_transaction,funding_source_wid,Null
+gold_core_wagering_ads.fact_dw_transaction,loyalty_acct_num,Null
+gold_core_wagering_ads.fact_dw_transaction,msg_cid,Null
+gold_core_wagering_ads.fact_dw_transaction,operator_id,operator_ref as operator_id
+gold_core_wagering_ads.fact_dw_transaction,outstanding_legs_num,NULL
+gold_core_wagering_ads.fact_dw_transaction,outstanding_legs_price,NULL
+gold_core_wagering_ads.fact_dw_transaction,related_dvce_id,cast(0 as Integer) as related_dvce_id
+gold_core_wagering_ads.fact_dw_transaction,residency_domain_wid,"CASE
+When jurisdictions_domicile_region_code is Null then jurisdictions_terminal_region_code
+Else jurisdictions_domicile_region_code
+END as  residency_domain_wid,"
+gold_core_wagering_ads.fact_dw_transaction,sales_locn_mnem,NULL
+gold_core_wagering_ads.fact_dw_transaction,sell_ticket_bus_date,NULL
+gold_core_wagering_ads.fact_dw_transaction,system_1_ind,NULL
+gold_core_wagering_ads.fact_dw_transaction,system_2_ind,NULL
+gold_core_wagering_ads.fact_dw_transaction,system_3_ind,NULL
+gold_core_wagering_ads.fact_dw_transaction,system_4_ind,NULL
+gold_core_wagering_ads.fact_dw_transaction,system_5_ind,NULL
+gold_core_wagering_ads.fact_dw_transaction,system_6_ind,NULL
+gold_core_wagering_ads.fact_dw_transaction,system_7_ind,NULL
+gold_core_wagering_ads.fact_dw_transaction,system_8_ind,NULL
+gold_core_wagering_ads.fact_dw_transaction,system_9_ind,NULL
+gold_core_wagering_ads.fact_dw_transaction,system_10_ind,NULL
+gold_core_wagering_ads.fact_dw_transaction,md_insert_datetime,Metadata column derivation from ETL
+slvr_crtd_bat_back.tdwref_wrf_dvce,dvce_id,Unique key to de dervied for each 
+slvr_crtd_bat_back.tdwref_wrf_dvce,wgrg_outl_id,use bkey_outlet and mapped it with trn_outlet to get the wgrg_outl_id
+slvr_crtd_bat_back.tdwref_wrf_dvce,effv_date,
+slvr_crtd_bat_back.tdwref_wrf_dvce,cse_date,
+slvr_crtd_bat_back.tdwref_wrf_dvce,adt_crtn_dt,
+slvr_crtd_bat_back.tdwref_wrf_dvce,adt_updt_dt,
+slvr_crtd_bat_back.tdwref_wrf_dvce,adt_updt_by,
+slvr_crtd_bat_back.tdwref_wrf_dvce,bet_host_id,"CASE (bet.state.betSlip.jurisdictions.account.regionCode)
+        WHEN 'VIC'  and 'ACT' THEN 2
+        WHEN 'NSW' THEN 10
+        ELSE            31      
+    END AS bet_host_id"
+slvr_crtd_bat_back.tdwref_wrf_dvce,pdty_id,"For Digital Bets - Account Bets: (CASE WHEN floor(n.sub_outl_window/1000) BETWEEN 20001 AND 29999 THEN 19   -- ABC
+            WHEN floor(n.sub_outl_window/1000) BETWEEN 30001 AND 39999 THEN 27   -- iBeacon
+            ELSE                                                            22   -- Mobile Phone
+       END) AS pdty_id  
+
+
+For Retails Bets : TBD"
+slvr_crtd_bat_back.tdwref_wrf_dvce,sub_outl_num,"CASE 
+            WHEN selling_terminal_name LIKE '400%' AND instr(selling_terminal_name,'/') = 0 THEN 
+                CASE
+                    WHEN CAST(SUBSTR(selling_terminal_name,5,4) AS INT) = 0 THEN '0'  ELSE SUBSTR(selling_terminal_name,5,4) 
+                END
+            WHEN selling_terminal_name LIKE '%/%' THEN REGEXP_REPLACE(SUBSTRING_INDEX(selling_terminal_name,'/',1) ,'^0+','')  ELSE dvce_name 
+          END AS sub_outl_num"
+slvr_crtd_bat_back.tdwref_wrf_dvce,sub_outl_window,"CASE 
+            WHEN selling_terminal_name LIKE '400%' AND instr(selling_terminal_name,'/') = 0 THEN substr(selling_terminal_name,4)
+            WHEN selling_terminal_name LIKE '%/%' THEN SUBSTRING_INDEX(selling_terminal_name,'/',-1)  ELSE selling_terminal_name 
+          END AS sub_outl_window"
+slvr_crtd_bat_back.tdwref_wrf_dvce,emergency_ind,FALSE
+slvr_crtd_bat_back.tdwref_wrf_dvce,dvce_type_mnem,"For Digital Bets - Account Bets:  , MOD(selling_terminal_name, 100) as dvce_type_mnem
+
+
+For Retails Bets : TBD"
+slvr_crtd_bat_back.tdwref_wrf_dvce,sub_outl_name,"For Digital Account Bets : Dvce name is sub_outl_name
+For Retail Bets : TBD"
+slvr_crtd_bat_back.tdwref_wrf_dvce,sales_locn_mnem,"CASE WHEN selling_terminal_name LIKE '400%' AND instr(selling_terminal_name,'/') = 0 THEN '4'  
+            ELSE substring(guest_id_trimmed,3,2) 
+          END AS sales_locn_mnem"
+slvr_crtd_bat_back.tdwref_wrf_dvce,dvce_addr_type,"1 for Retail
+4 for Digital"
+slvr_crtd_bat_back.tdwref_wrf_dvce,addr_part_1_num,sub_outlet_num
+slvr_crtd_bat_back.tdwref_wrf_dvce,addr_part_2_num,sub_outlet_window
+slvr_crtd_bat_back.tdwref_wrf_dvce,addr_part_3_num,
+slvr_crtd_bat_back.tdwref_wrf_dvce,addr_part_1_text,
+slvr_crtd_bat_back.tdwref_wrf_dvce,addr_part_2_text,
+slvr_crtd_bat_back.tdwref_wrf_dvce,addr_part_3_text,
+slvr_crtd_bat_back.tdwref_wrf_dvce,dvce_name,"For Digital Account bets : selling_terminal_name
+For Retail bets : suboutlet_num/suboutlet_window"
+slvr_crtd_bat_back.tdwref_wrf_dvce,ctrl_node_mnem,
+slvr_crtd_bat_back.tdwref_wrf_dvce,software_version,
+slvr_crtd_bat_back.tdwref_wrf_dvce,dscv_text,Null
+slvr_crtd_bat_back.tdwref_wrf_dvce,fin_domain_wid,"bet.state.betSlip.jurisdiction.accountRegion
+bet.state.betSlip.jurisdiction.terminalRegion"
+slvr_crtd_bat_back.tdwref_wrf_dvce,betting_alwd_ind,
+slvr_crtd_bat_back.tdwref_wrf_dvce,cash_txns_alwd_ind,
+slvr_crtd_bat_back.tdwref_wrf_dvce,acct_txns_alwd_ind,
+slvr_crtd_bat_back.tdwref_wrf_dvce,src_table_name,
+slvr_crtd_bat_back.tdwref_wrf_dvce,created_datetime,
+slvr_crtd_bat_back.tdwref_wrf_dvce,updated_datetime,
+slvr_crtd_bat_back.tdwref_wrf_dvce,deleted_datetime,
+slvr_crtd_bat_back.tdwref_wrf_dvce,tote_house_num,
+gold_core_wagering_ads.fact_fixed_odds_book,fixed_odds_book_id,This is a surrogate key
+gold_core_wagering_ads.fact_fixed_odds_book,fixed_odds_contest_id,"concat_ws('||',category.category,class.id,type.id,event.id,to_date(event.creation_date)) as fixed_odds_contest_id"
+gold_core_wagering_ads.fact_fixed_odds_book,source_system_id,cast (4 as INT) as source_system_id
+gold_core_wagering_ads.fact_fixed_odds_book,book_code,"concat_ws('||',class.id,event.id,market.id) as book_code"
+gold_core_wagering_ads.fact_fixed_odds_book,book_name,"concat_ws('||',competition_name,contest_name,market.name) as book_name"
+gold_core_wagering_ads.fact_fixed_odds_book,event_datetime,event.creation_date as event_datetime
+gold_core_wagering_ads.fact_fixed_odds_book,skey_fixed_odds_sport,category.id as skey_fixed_odds_sport
+gold_core_wagering_ads.fact_fixed_odds_book,skey_fixed_odds_competition,"concat_ws('||',category.id,class.id,to_date(class.creation_date)) as skey_fixed_odds_competition"
+gold_core_wagering_ads.fact_fixed_odds_book,skey_fixed_odds_tournament,"concat_ws('||',category.id,class.id,type.id,to_date(type.creation_date)) as skey_fixed_odds_tournament"
+gold_core_wagering_ads.fact_fixed_odds_book,skey_fixed_odds_bet_type,mkt_template.id as skey_fixed_odds_bet_type
+gold_core_wagering_ads.fact_fixed_odds_book,spectrum_book_id,"concat_ws('||',category.id,class.id,type.id,event.id,market.id,outcome.name,to_date(outcome.creation_date)) as spectrum_book_id"
+gold_core_wagering_ads.fact_fixed_odds_book,spectrum_sport_code,category as spectrum_sport_code
+gold_core_wagering_ads.fact_fixed_odds_book,event_id,"concat_ws('||',category.id,class.id,type.id,event.id,event.creation_date) as event_id"
+gold_core_wagering_ads.fact_fixed_odds_book,mtng_id,Null
+gold_core_wagering_ads.fact_fixed_odds_book,dw_product_group_id,"case 
+                        when category.category IN (
+                                'GREYHOUNDS',
+                                'HARNESS_RACING',
+                                'VR_HORSE_RACING',
+                                'HORSE_RACING',
+                                'RACING_EXTRAS',
+                                'JOCKEY_CHALLENGE'
+                        ) then 5
+                        else 1
+                end as dw_product_group_id"
+gold_core_wagering_ads.fact_fixed_odds_book,competition_id,"concat_ws('||',category.id,class.id,to_Date(class.creation_date)) as competition_id"
+gold_core_wagering_ads.fact_fixed_odds_book,tournament_id,"concat_ws('||'category.id,class.id,type.id,to_date(type.creation_date)) as tournament_id"
+gold_core_wagering_ads.fact_fixed_odds_book,first_prop_presale_date,
+gold_core_wagering_ads.fact_fixed_odds_book,first_prop_resolved_date,
+gold_core_wagering_ads.fact_fixed_odds_book,datetime_category,
+gold_core_wagering_ads.fact_fixed_odds_book,contest_name,"concat_ws('||',category.name,class.name,type.name,event.name,to_date(event.creation_Date))as contest_name"
+gold_core_wagering_ads.fact_fixed_odds_book,skey_fixed_odds_sport_body,
+gold_core_wagering_ads.fact_fixed_odds_book,live_bet_indicator,"live_bet_ind =false;
+
+LOOP(bets.leg.legParts){
+ IF(legParts.isInRunning == true) THEN {
+         live_bet_ind = true;
+        break;
+}
+
+""Typically the bet is considered in-running it at least one leg is in-running"" 
+so, to check all isInRunning attribute in all legParts"
+gold_core_wagering_ads.fact_fixed_odds_book,first_business_date,"trn_dw_bet
+max(ob.effective_price) over (partition by ob.bkey_ticket, ob.business_date) as effective_combined_price"
+gold_core_wagering_ads.fact_fixed_odds_book,last_applied_business_date,
+gold_core_wagering_ads.fact_fixed_odds_book,md_insert_datetime,Metadata column derivation from ETL
+gold_core_wagering_ads.fact_fixed_odds_book,md_business_date,"to_date(greatest(category.header_timestamp,class.header_timestamp,type.header_timestamp,event.header_timestamp,market.header_timestamp,oucome.header_timestamp))md_business_date"
+gold_ntgt_back.spectrum_evnt,fixed_odds_book_id,Direct from trn_ob_dw_fo_book.fixed_odds_book_id - primary key for betting book
+gold_ntgt_back.spectrum_evnt,spectrum_book_id,Direct from trn_ob_dw_fo_book.spectrum_book_id - spectrum system identifier
+gold_ntgt_back.spectrum_evnt,sptm_sport_code,"Direct from trn_ob_dw_fo_book.spectrum_sport_code - standardized sport code (JOCKEYCHAL, HORSERACE, DRIVERCHAL, HARNESS, GREYHOUNDS, etc.)"
+gold_ntgt_back.spectrum_evnt,final_leg1_result_date,"Coalesced result date determined from three sources in priority order:
+  1. bn_leg1_result_date - extracted from book name with date validation (within +/-1 day of calc_result_date)
+  2. cn_leg1_result_date - extracted from contest name with date validation
+  3. book_calc_result_date - calculated from event_datetime (if hour < 5, subtract 1 day; else use event date)"
+gold_ntgt_back.spectrum_evnt,final_leg1_event_num,"Coalesced event number from three sources (priority order):
+  1. bn_leg1_event_num - extracted from book name via regex: '^(.*[- ])?(R|RACE ?)([0-9]{1,2})([^0-9].*)?$'
+  2. cn_leg1_event_num - extracted from contest name via regex: '^(.* )?(R|RACE ?)([0-9]{1,2})([^0-9].*)?$'
+  3. book_cat2_event_num - cast from fo_book.datetime_category if numeric"
+gold_ntgt_back.spectrum_evnt,book_code,Direct from trn_ob_dw_fo_book.book_code - internal book identifier code
+gold_ntgt_back.spectrum_evnt,book_event_datetime,Direct from trn_ob_dw_fo_book.event_datetime - timestamp of event (also extract event_time as HH:mm:ss)
+gold_ntgt_back.spectrum_evnt,book_competition_id,Direct from trn_ob_dw_fo_book.competition_id - joined to ob_dim_fixed_odds_competition for competition_name
+gold_ntgt_back.spectrum_evnt,book_tournament_id,Coalesced from trn_ob_dw_fo_book.tournament_id with default 0 (NVL to 0) - joined to ob_dim_fixed_odds_tournament for tournament_name
+gold_ntgt_back.spectrum_evnt,first_prop_presale_date,Cast to DATE from trn_ob_dw_fo_book.first_prop_presale_date - earliest presale date for any proposition in book
+gold_ntgt_back.spectrum_evnt,first_prop_resolved_date,Cast to DATE from trn_ob_dw_fo_book.first_prop_resolved_date - earliest resolved date for any proposition in book
+gold_ntgt_back.spectrum_evnt,bkey_evnt,Hardcoded constant '-1' - placeholder for business key event (future population pending)
+gold_ntgt_back.spectrum_evnt,book_name,Direct from trn_ob_dw_fo_book.book_name - display name for betting book
+gold_ntgt_back.spectrum_evnt,md_insert_datetime,now() - current_timestamp() - audit timestamp when record is loaded
+gold_ntgt_back.spectrum_evnt,data_business_date,Direct from trn_ob_dw_fo_book.first_business_date - business date of first proposition
+gold_ntgt_back.spectrum_evnt,book_sport_id,"Derived via CASE logic from book_name patterns - maps to standardized sport ID:
+  1 = JOCKEYCHAL, GATORS BEST, QRT, RACING, HORSERACE (Thoroughbred)
+  2 = HRV OFFER, HARNESS, DRIVER CHALLENGE, DRIVER, ON THE PACE, QRH, TEAM TEAL (Harness)
+  3 = GREYS, GREYHOUND, DOGS, QRG, BOXCHALLNG (Greyhound)
+  NULL = if no patterns match or cannot be determined"
+gold_ntgt_back.spectrum_evnt,cn_leg1_venue_name,"Extracted from fo_contest.contest_name via regexp_replace to remove marketing terms and standardize:
+  Removes: TOCS BEST, DRIVER CHALLENGE, GOING GREYS, GREEN AND GOLD, TEAM TEAL, TRIAL V TRADER, SADDLECLOTH, etc.
+  Removes: Race numbers (R##), box numbers (BOX ##), date indicators (##/##), special keywords (WINNERS, OFFERS, SPECIAL, MULTI, H2H)
+  Result: cleaned venue name extracted from contest marketing text"
+gold_ntgt_back.spectrum_evnt,bn_leg1_venue_name,"Extracted from trn_ob_dw_fo_book.book_name via regexp_replace with same removal logic as cn_leg1_venue_name
+  Then standardized via extensive CASE statement (40+ mappings) for common venue name variations:
+  - Spelling corrections: WARNAMBOOL -> WARRNAMBOOL, MORPHETVILLE -> MORPHETTVILLE, MANDRAH -> MANDURAH
+  - Abbreviation expansions: MVALLEY -> MOONEE VALLEY, MT -> MOUNT, PT -> PORT, FM -> FARM, PK -> PARK, BDG -> BRIDGE, CST -> COAST
+  - Specific venue mappings: ROYAL RANDWICK -> RANDWICK, ARAWA PARK -> ROTORUA, ASCOT (greyhound) -> ASCOT PARK, KEMBLA -> KEMBLA GRANGE
+  - Special case for Jockey Challenge: if bn_leg1_venue_name = 'ROYA' AND cn_leg1_venue_name = 'ROYAL RANDWICK' then 'RAND'"
+gold_ntgt_back.spectrum_evnt,mstpts_venue_name_pattern,"Pattern string generated only for Challenge events (JOCKEYCHAL, BOXCHALLNG, DRIVERCHAL):
+  If sport_code IN (JOCKEYCHAL, BOXCHALLNG, DRIVERCHAL) AND bn_leg1_venue_name IS NOT NULL AND length <= 20:
+    Pattern: '%' || regexp_replace(bn_leg1_venue_name, '(.)', '\1%') - wildcard pattern between each character
+    Example: 'RAND' becomes '%R%A%N%D%' for fuzzy venue matching
+  Else: NULL"
+gold_ntgt_back.spectrum_evnt,final_leg1_sport_id,"Cast to INT from final_leg1_sport_id1 (coalesced from multiple sources):
+  Priority 1: book_sport_id (from book name patterns)
+  Priority 2: bn_leg1_sport_id (from book name patterns, alternative logic)
+  Priority 3: cn_leg1_sport_id (from contest name patterns, alternative logic)
+  Priority 4: Derived from proposition analysis (book_prop_count_upd):
+    - If propositions contain 'HORSES MUST START' -> 1 (Thoroughbred)
+    - If propositions contain 'DOGS MUST START' or 'GREYS MUST START' -> 3 (Greyhound)
+    - Applied to RACINGXTRA, SPORTEXOTC, TODAYSPECL sports when other methods inconclusive"
+gold_ntgt_back.spectrum_evnt,bn_leg1_venue_name_first_word,"Extract first word from bn_leg1_venue_name1 (post-standardization):
+  Rules: If word length <= 4 characters OR word IN ('GOLDEN', 'MOUNT', 'SANTA'), return full name
+  Otherwise: Extract first alpha-only word via regexp_replace('[^A-Z].*$', '')
+  Examples: 'MOONEE VALLEY' -> 'MOONEE', 'NEW YORK' -> 'NEW YORK' (length 3), 'GOLDEN MILE' -> 'GOLDEN MILE'"
+gold_ntgt_back.spectrum_evnt,cn_leg1_venue_name_first_word,"Same logic as bn_leg1_venue_name_first_word but applied to cn_leg1_venue_name1:
+  If word length <= 4 characters OR word IN ('GOLDEN', 'MOUNT', 'SANTA'), return full name
+  Otherwise: Extract first alpha-only word via regexp_replace('[^A-Z].*$', '')"
+gold_ntgt_back.spectrum_evnt,book_comp_sport_id,Direct from ob_dim_fixed_odds_competition.sport_id - sport ID from competition dimension table
+gold_core_wagering_ads.dim_fixed_odds_sport,skey_fixed_odds_sport,"concat_ws('||',category,id) as skey_fixed_odds_sport"
+gold_core_wagering_ads.dim_fixed_odds_sport,sport_code,supporting_state_outcome.category_ref
+gold_core_wagering_ads.dim_fixed_odds_sport,sport_name,supporting_state_outcome.category_name
+"gold_core_wagering_ads.dim_fixed_odds_competition	",skey_fixed_odds_competition,"sha1(concat_ws('||',competition_code, sport_id, effective_date)) AS skey_fixed_odds_competition"
+"gold_core_wagering_ads.dim_fixed_odds_competition	",competition_code,sport_type.id
+"gold_core_wagering_ads.dim_fixed_odds_competition	",competition_name,sport_type.name
+"gold_core_wagering_ads.dim_fixed_odds_competition	",sport_id,sport_category.id
+"gold_core_wagering_ads.dim_fixed_odds_competition	",effective_date,First occurance date of the competition ( sport_class.creation_date)
+"gold_core_wagering_ads.dim_fixed_odds_competition	",cease_date,3000-01-01 unless notifed the competion is closed
+"gold_core_wagering_ads.dim_fixed_odds_competition	",md_insert_datetime,Metadata column derivation from ETL
+gold_core_wagering_ads.dim_fixed_odds_tournament,skey_fixed_odds_tournament,"Combination of competition_code, tournament_code and effective_date"
+gold_core_wagering_ads.dim_fixed_odds_tournament,competition_code,sport_type.id
+gold_core_wagering_ads.dim_fixed_odds_tournament,tournament_code,sport_class.id
+gold_core_wagering_ads.dim_fixed_odds_tournament,tournament_name,sport_class.name
+gold_core_wagering_ads.dim_fixed_odds_tournament,skey_fixed_odds_competition,"Business key if competition code, get it from FO Competition"
+gold_core_wagering_ads.dim_fixed_odds_tournament,effective_date,First occurance of the tournament
+gold_core_wagering_ads.dim_fixed_odds_tournament,cease_date,3000-01-01 unless notifed the tournament is closed
+gold_core_wagering_ads.dim_fixed_odds_tournament,md_insert_datetime,Metadata column derivation from ETL
+gold_core_wagering_ads.dim_event_contest,time_of_day,From trn_meeting_time_type.mtng_time_type_mnem for Bravo; '?' for Fixed Odds and dummy records; used in comparative meeting logic
+gold_core_wagering_ads.dim_event_contest,track_condition,cla_meeting.track_surface_condition for Bravo; '?' for Fixed Odds and dummy records
+gold_core_wagering_ads.dim_event_contest,meeting_skey,Generated via: row_number() OVER (ORDER BY meeting_id) for new meetings; used for meeting-level tracking
+gold_core_wagering_ads.dim_event_contest,comparative_meeting_skey,Complex join logic: matches 12-month prior meeting with priority-based criteria (venue/time/VOTS/sport/region); default -2 if no match
+gold_core_wagering_ads.dim_event_contest,bkey_event,cla_event.bkey_evnt for Bravo; '-1' string for Fixed Odds and dummy records; business key for reconciliation
+gold_core_wagering_ads.dim_fixed_odds_contest,fixed_odds_contest_id,"sha1(concat_ws('||',event.id, category.id, event.name )) AS fixed_odds_contest_id"
+gold_core_wagering_ads.dim_fixed_odds_contest,contest_name,sport_event.name
+gold_core_wagering_ads.dim_fixed_odds_contest,sport,supporting_state_outcome.category_name
+gold_core_wagering_ads.dim_fixed_odds_contest,contest_code,sport_event.id
+gold_core_wagering_ads.dim_fixed_odds_contest,skey_fixed_odds_sport,"sha1(concat_ws('||',category.category, category.id)) AS skey_fixed_odds_sport"
+gold_core_wagering_ads.dim_fixed_odds_contest,source_system_id,4 as source_system_id
+gold_core_wagering_ads.dim_fixed_odds_contest,start_date,"First occurance of the contest 
+event.start_time as start_date"
+gold_core_wagering_ads.dim_fixed_odds_contest,end_date,"When the contest is ended
+'3000-01-01' as end_date"
+gold_core_wagering_ads.dim_fixed_odds_contest,current_ind,"CASE
+When end_date = '3000-01-01' Then T
+ELSE F
+END as current_ind"
+gold_core_wagering_ads.dim_fixed_odds_contest,md_insert_datetime,Metadata column derivation from ETL
+gold_core_wagering_ads.dim_fixed_odds_bet_type,skey_fixed_odds_bet_type,"concat_ws('||',lower(category.category),type.id,class.id,event.id,market.id,mkt_template.id) as skey_fixed_odds_bet_type"
+gold_core_wagering_ads.dim_fixed_odds_bet_type,bet_type_code,"Internal bet type identifier: CAST(mkt_tmpl.id AS INT)
+  Source: trn_ob_sport_incr_market_template.id
+  Data type: Integer
+  Examples: 1 (WIN), 2 (PLACE), 3 (EXACTA), etc.
+  Business meaning: System ID for the betting market type
+  Used for: Primary key lookups and join operations"
+gold_core_wagering_ads.dim_fixed_odds_bet_type,bet_type_name,"Display name for bet type: mkt_tmpl.name
+  Source: trn_ob_sport_incr_market_template.name
+  Data type: String
+  Examples: 'EXACTA', 'TRIFECTA', 'DAILY DOUBLE', etc.
+  Business meaning: Human-readable bet type description
+  Used for: Reporting and user-facing displays"
+gold_core_wagering_ads.dim_fixed_odds_bet_type,start_date,"Effective start date of bet type: CAST(NULL AS DATE)
+  Source: Hardcoded NULL
+  Data type: DATE
+  Purpose: Reserved for future temporal tracking
+  Status: Currently not populated; placeholder for dimension history tracking
+  Note: Could be populated from mkt_tmpl effective dates if source data enhanced"
+gold_core_wagering_ads.dim_fixed_odds_bet_type,end_date,"Effective end date of bet type: CAST(NULL AS DATE)
+  Source: Hardcoded NULL
+  Data type: DATE
+  Purpose: Reserved for future temporal tracking of bet type retirement
+  Status: Currently not populated; placeholder for slow-changing dimension tracking
+  Note: Could indicate when bet type is no longer offered"
+gold_core_wagering_ads.dim_fixed_odds_bet_type,current_ind,"Currency/Active indicator: CAST(NULL AS STRING)
+  Source: Hardcoded NULL
+  Data type: STRING
+  Purpose: Reserved for marking current vs historical records
+  Status: Currently not populated; placeholder for dimension versioning
+  Format: Likely 'Y' or 'N' / 'T' or 'F' when implemented
+  Use case: Filtering to only current bet type definitions
+ "
+gold_core_wagering_ads.dim_fixed_odds_bet_type,md_insert_datetime,Metadata column derivation from ETL
+gold_core_wagering_ads.dim_fixed_odds_bet_type,md_file_business_date,"CAM date will be used 
+(to be confirmed from Veremo)
+We are looking for CAM EOD day data for this for which CR to to raised and it  was discussed it will come in UTC and later cane be converted in AEST by DIVA"
+gold_rptg_dshbrd.dm_dim_bet_type,skey_dim_bet_type,"Generated surrogate key: 141 + row_number() OVER (ORDER BY CASE WHEN bet_type_id IS NULL THEN 1 ELSE 0 END, bet_type_id, prod_clss_id)
+  Starting point: Base offset 141 ensures no collision with legacy keys
+  Ranking logic:
+    Primary sort: NULL bet_type_id records first (CASE returns 1 for NULL, 0 for non-NULL)
+    Secondary sort: bet_type_id ASC (Fixed Odds bet types)
+    Tertiary sort: prod_clss_id ASC (Product class/Non-FO bet types)
+  Result: Sequential integer starting from 142 (141 + 1)
+  Ensures: Non-FO bet types (with NULL bet_type_id) are ranked first
+  Purpose: Dimension key for referential integrity and join operations
+ "
+gold_rptg_dshbrd.dm_dim_bet_type,bkey_dim_bet_type,"Composite business key: concat_ws('||', 'default', coalesce(bet_type_id, '-1'), coalesce(prod_clss_id, '-1'))
+  Components: 'default' || bet_type_id || prod_clss_id
+  Example: 'default||3||' (FO exacta) or 'default||-1||5' (Non-FO bet type)
+  Coalesce handling: Replaces NULL with '-1' string representation
+  Format: Pipe-delimited composite key maintaining both FO and non-FO identifiers
+  Purpose: Business key for reconciliation and alternative lookup"
+gold_rptg_dshbrd.dm_dim_bet_type,bet_type_id,"Fixed Odds bet type identifier: fo_bet_type.bet_type_code OR NULL for non-FO records
+  Source: trn_ob_e_bet.bet_type_code (Fixed Odds source)
+  Data type: INT
+  Value for Non-FO: NULL (non-Fixed Odds bet types have no FO equivalent)
+  Examples: 1 (WIN), 2 (PLACE), 3 (EXACTA), etc. for FO records
+  Business meaning: Identifies bet type within Fixed Odds system
+  Null meaning: Record sourced from non-FO/racing wagering system"
+gold_rptg_dshbrd.dm_dim_bet_type,prod_clss_id,"Non-Fixed Odds product class identifier: wrc_bet_type.bet_type_id OR NULL for FO records
+  Source: tdwref_wrc_bet_type.bet_type_id (Racing/Wagering bet type)
+  Data type: INT
+  Value for FO: NULL (Fixed Odds bet types have no WRC equivalent)
+  Examples: 5, 10, 15, etc. for non-FO racing/wagering records
+  Business meaning: Identifies bet type within Racing/Wagering system
+  Null meaning: Record sourced from Fixed Odds system only"
+gold_rptg_dshbrd.dm_dim_bet_type,bet_type_desc,"Display name for bet type: fo_bet_type.bet_type_name OR non_fo_bet_type.bet_type_name
+  Source: Either trn_ob_e_bet.bet_type_name (FO) or tdwref_wrc_bet_type.bet_type_name (non-FO)
+  Data type: STRING
+  Examples: 'EXACTA', 'TRIFECTA', 'DAILY DOUBLE', 'WIN', 'PLACE', etc.
+  Business meaning: Human-readable bet type description
+  Used for: Reporting, display, and end-user communication"
+gold_rptg_dshbrd.dm_dim_bet_type,md_insert_datetime,Metadata column derivation from ETL
+gold_ntgt_back.trn_dw_fo_prop,fixed_odds_proposition_id,"Composite surrogate key: concat_ws('||', lower(category),type.id, class.id, event.id, market.id, outcome.id, to_date(event.creation_date))
+  Components: category || class_id || type_id || event_id || market_id || outcome_id || event_creation_date
+  Example: 'racing||1||54||12345||67890||98765||2024-08-11'
+  Uniquely identifies individual outcome/proposition across the betting hierarchy"
+gold_ntgt_back.trn_dw_fo_prop,fixed_odds_book_id,"Composite surrogate key: concat_ws('||', lower(category), type.id, class.id, event.id, market.id, to_date(event.creation_date))
+  Components: category || class_id || type_id || event_id || market_id || event_creation_date
+  Note: Does NOT include outcome.id or market.id (groups outcomes within same market)
+  Used as foreign key to link propositions to parent book/market"
+gold_ntgt_back.trn_dw_fo_prop,proposition_num,"outcome.id from ob_sport_outcome_hist - unique outcome identifier within market and event
+  Direct mapping: Direct from outcome dimension
+  Used as alternative key for matching with presale/resolution data"
+gold_ntgt_back.trn_dw_fo_prop,proposition_name,"outcome.name from ob_sport_outcome_hist - display name for the outcome/proposition
+  Examples: 'Horse #5 to Win', 'Exacta Box 1-2-3', 'First Goal Scorer'
+  Direct mapping: outcome.name"
+gold_ntgt_back.trn_dw_fo_prop,proposition_status,"Current status of the outcome - derived via CASE logic from status dimension:
+  'OPN' = is_active=T AND is_displayed=T AND is_resulted=F AND is_settled=F (Open for betting)
+  'SUS' = is_active=F AND is_displayed=T AND is_resulted=F AND is_settled=F (Suspended)
+  NULL = all other conditions (CLS=Closed, OFF=Off market not yet implemented)
+  Source: ob_sport_outcome_status_hist (most recent status via qualify rn=1)"
+gold_ntgt_back.trn_dw_fo_prop,proposition_result,"Result code mapping - derived via CASE logic from result dimension:
+  'LSE' = result='L' (Lose)
+  'RNI' = result IN ('U', '-') (Result Not In)
+  'WIN' = result='W' (Win)
+  'RFE' = result='V' (Refunded)
+  'PLx' = CONCAT('PL', CAST(place AS STRING)) when result='P' (Place result with place number)
+  'HANDICAP' = result='H' (Handicap - logic incomplete per comment)
+  Source: ob_sport_outcome_result_hist (most recent result via qualify rn=1)"
+gold_ntgt_back.trn_dw_fo_prop,dead_heat,"Dead heat reduction factor for WIN outcomes - derived from dead_heat reduction:
+  Calculation: CAST(dead_heat_redn_num AS DOUBLE) / CAST(dead_heat_redn_den AS DOUBLE)
+  Condition: ONLY populated when dead_heat_redn_type = 'W'
+  Else: NULL
+  Example: 2/3 = 0.6667 (two-way dead heat splits winnings)
+  Source: ob_sport_outcome_dead_heat_redn_hist (most recent via qualify rn=1)"
+gold_ntgt_back.trn_dw_fo_prop,place_dead_heat,"Dead heat reduction factor for PLACE outcomes - derived from dead_heat reduction:
+  Calculation: CAST(dead_heat_redn_num AS DOUBLE) / CAST(dead_heat_redn_den AS DOUBLE)
+  Condition: ONLY populated when dead_heat_redn_type = 'P'
+  Else: NULL
+  Source: ob_sport_outcome_dead_heat_redn_hist (most recent via qualify rn=1)"
+gold_ntgt_back.trn_dw_fo_prop,first_presale_date,"Earliest presale ticket/bet date for proposition - aggregated from betting detail:
+  Source: init_ob_bet_detail LEFT JOIN aggregation
+  Logic: MIN(business_date) WHERE dw_tran_type_id = 2 (presale transaction type)
+  Grouped by: proposition_number
+  Condition: HAVING count(*) > 0 (only if presale records exist)
+  NULL if no presale activity recorded"
+gold_ntgt_back.trn_dw_fo_prop,first_resolved_date,"Earliest resolution/settlement date for proposition - aggregated from betting detail:
+  Source: init_ob_bet_detail LEFT JOIN aggregation
+  Logic: MIN(business_date) WHERE dw_tran_type_id IN (35, 36) (resolution/settlement transaction types)
+  Grouped by: proposition_number
+  Condition: HAVING count(*) > 0 (only if resolution records exist)
+  NULL if no resolution activity recorded
+  Note: Multiple transaction types indicate different resolution/settlement stages"
+gold_ntgt_back.trn_dw_fo_prop,feed_managed_flag,"Boolean flag indicating if outcome sourced from managed external feed:
+  Derivation: CASE WHEN event_ext_source.provider IS NULL AND market_ext_source.provider IS NULL THEN false ELSE true END
+  Logic:
+    TRUE = outcome has external provider mapping at either event or market level
+    FALSE = outcome is manually entered or internally sourced (no provider)
+  Source: sports_event_external_source and sports_market_external_source CTEs
+    - Event external source: WHERE ref_entity_name = 'OB_SPORTS_EVENT' (most recent via qualify rn=1)
+    - Market external source: WHERE ref_entity_name = 'OB_SPORTS_MARKET' (most recent via qualify rn=1)
+  Business meaning: Distinguishes feed-populated vs manual-entry propositions"
+gold_ntgt_back.trn_dw_fo_prop,first_business_date,"Earliest business date across all dimension records contributing to outcome:
+  Calculation: LEAST(category.business_date, type.business_date, class.business_date, event.business_date, market.business_date, outcome.business_date)
+  Represents: Effective start date when this outcome entered the system
+  Used for: Tracking data lineage and incremental load filtering"
+gold_ntgt_back.trn_dw_fo_prop,last_applied_business_date,"Latest business date across all dimension records contributing to outcome:
+  Calculation: GREATEST(category.business_date, type.business_date, class.business_date, event.business_date, market.business_date, outcome.business_date)
+  Represents: Most recent date any dimension record was updated
+  Used for: Identifying recently modified outcomes and MERGE conflict resolution
+  Important: MERGE uses this field in ORDER BY clause for deduplication when multiple versions exist"
+gold_ntgt_back.trn_dw_fo_prop,md_insert_datetime,Metadata column derivation from ETL
+gold_ntgt_back.trn_dw_fo_book_mtng,fixed_odds_book_id,
+gold_ntgt_back.trn_dw_fo_book_mtng,spectrum_book_id,
+gold_ntgt_back.trn_dw_fo_book_mtng,meeting_id,
+gold_ntgt_back.trn_dw_fo_book_mtng,event_id,
+gold_ntgt_back.trn_dw_fo_book_mtng,mtng_result_date,
+gold_ntgt_back.trn_dw_fo_book_mtng,book_event_datetime,
+gold_ntgt_back.trn_dw_fo_book_mtng,book_competition_id,
+gold_ntgt_back.trn_dw_fo_book_mtng,book_tournament_id,
+gold_ntgt_back.trn_dw_fo_book_mtng,md_insert_datetime,Metadata column derivation from ETL
+gold_core_wagering_ads.fact_fixed_odds_proposition_change,record_seq_number,Surrogate Key - row_number() OVER (ORDER BY transaction_timestamp) - sequential identifier for all change records
+gold_core_wagering_ads.fact_fixed_odds_proposition_change,transaction_datetime,header_timestamp from source tables (price/status/result/dead_heat history tables)
+gold_core_wagering_ads.fact_fixed_odds_proposition_change,fixed_odds_proposition_id,sports_outcome_ref (PRICE/STATUS sources) or sport_outcome_id (RESULTS/DEAD_HEAT sources)
+gold_core_wagering_ads.fact_fixed_odds_proposition_change,pool_type_id,Constant null across all change types; reserved for future pool-level tracking
+gold_core_wagering_ads.fact_fixed_odds_proposition_change,change_type,Constant value determined by source: 'PRICE' (from price CTE) | 'STATUS' (from status CTE) | 'RESULTS' (from result CTE) | 'DEAD HEAT' (from dead_heat CTE)
+gold_core_wagering_ads.fact_fixed_odds_proposition_change,new_value,"CURRENT VALUE - varies by change_type:
+  PRICE: decimal (from trn_ob_sport_outcome_price_hist.decimal)
+  STATUS: 'OPN' (active=T, displayed=T, resulted=F, settled=F) | 'SUS' (active=F, displayed=T, resulted=F, settled=F) | null if other conditions
+  RESULTS: 'LSE' (L) | 'RNI' (U or -) | 'WIN' (W) | 'RFE' (V) | 'PLx' (P + place number) | 'HANDICAP' (H)
+  DEAD_HEAT: CAST(ROUND(dead_heat_redn_num / dead_heat_redn_den) AS INT AS STRING)"
+gold_core_wagering_ads.fact_fixed_odds_proposition_change,old_value,"PREVIOUS VALUE - extracted via LEAD window function ordered by transaction_timestamp DESC, coalesced to default if null:
+  PRICE: LEAD(decimal) OVER (PARTITION BY sports_outcome_ref ORDER BY header_timestamp DESC) DEFAULT '0.000'
+  STATUS: LEAD(status_case_logic) OVER (PARTITION BY sports_outcome_ref ORDER BY header_timestamp DESC) DEFAULT 'CLS'
+  RESULTS: LEAD(result_case_logic) OVER (PARTITION BY sport_outcome_id ORDER BY header_timestamp DESC) DEFAULT 'RNI'
+  DEAD_HEAT: LEAD(dead_heat_calc) OVER (PARTITION BY sport_outcome_id ORDER BY header_timestamp DESC) DEFAULT '0'"
+gold_core_wagering_ads.fact_fixed_odds_proposition_change,admin_user,Constant 'UNK' (Unknown) - placeholder for user who initiated change; sourced externally in future
+gold_core_wagering_ads.fact_fixed_odds_proposition_change,feed_managed_flag,CASE WHEN trn_ob_dw_fo_prop.feed_managed_flag = true THEN 'T' ELSE 'F' END - joined on fixed_odds_proposition_id = prop.proposition_num | indicates if proposition is feed-managed
+gold_core_wagering_ads.fact_fixed_odds_proposition_change,md_insert_datetime,Metadata column derivation from ETL
+gold_core_wagering_ads.fact_fixed_odds_proposition_change,md_business_date,business_date from source tables (price/status/result/dead_heat history tables) - business date of the change transaction
+gold_ntgt_back.trn_dw_intercept_bet,dw_intercept_bet_id,"Its a surrogate key,  need to define abkey ---> (bet_id, header_timestamp, context_ref)"
+gold_ntgt_back.trn_dw_intercept_bet,bus_date,CAM EOD
+gold_ntgt_back.trn_dw_intercept_bet,md_file_row_number,
+gold_ntgt_back.trn_dw_intercept_bet,dvce_id,
+gold_ntgt_back.trn_dw_intercept_bet,source_system_id,
+gold_ntgt_back.trn_dw_intercept_bet,dw_financial_domain_id,
+gold_ntgt_back.trn_dw_intercept_bet,fixed_odds_proposition_id,
+gold_ntgt_back.trn_dw_intercept_bet,dw_bet_category_id,
+gold_ntgt_back.trn_dw_intercept_bet,bet_type_description,
+gold_ntgt_back.trn_dw_intercept_bet,dw_intercept_status_id,
+gold_ntgt_back.trn_dw_intercept_bet,intercept_status_description,
+gold_ntgt_back.trn_dw_intercept_bet,dw_rev_allocation_group_id,
+gold_ntgt_back.trn_dw_intercept_bet,tran_tf_num,
+gold_ntgt_back.trn_dw_intercept_bet,tran_datetime,same as the transaction date time of ob_bet_Detail for the bet placed
+gold_ntgt_back.trn_dw_intercept_bet,ticket_date,
+gold_ntgt_back.trn_dw_intercept_bet,tran_status,
+gold_ntgt_back.trn_dw_intercept_bet,tran_error_reason,
+gold_ntgt_back.trn_dw_intercept_bet,community,
+gold_ntgt_back.trn_dw_intercept_bet,branch,
+gold_ntgt_back.trn_dw_intercept_bet,tran_window,
+gold_ntgt_back.trn_dw_intercept_bet,revenue_source,
+gold_ntgt_back.trn_dw_intercept_bet,outlet_site_num,"For Account bets use selling_terminal_name (from CAM) to calculate the bkey_outlet from dvce table , for cashbets use bet.sourceTerminalREF"
+gold_ntgt_back.trn_dw_intercept_bet,tran_operator_id,
+gold_ntgt_back.trn_dw_intercept_bet,tran_admin_user,
+gold_ntgt_back.trn_dw_intercept_bet,tran_hashed_tsn,
+gold_ntgt_back.trn_dw_intercept_bet,acc_num,
+gold_ntgt_back.trn_dw_intercept_bet,intercept_bet_start_datetime,CASE WHEN (context-ref = 'BET.BET-PENDING'  or status  = 'PENDING' )  then header_timestamp
+gold_ntgt_back.trn_dw_intercept_bet,intercept_bet_end_datetime,The header timestamp when the status is changed from PENDING to ACTIVE
+gold_ntgt_back.trn_dw_intercept_bet,book_manager_ib_end_datetime,
+gold_ntgt_back.trn_dw_intercept_bet,customer_ib_start_datetime,
+gold_ntgt_back.trn_dw_intercept_bet,customer_ib_end_datetime,
+gold_ntgt_back.trn_dw_intercept_bet,each_way_ind,
+gold_ntgt_back.trn_dw_intercept_bet,nbr_components_in_ticket,
+gold_ntgt_back.trn_dw_intercept_bet,initial_place_bet_amt,
+gold_ntgt_back.trn_dw_intercept_bet,initial_win_bet_amt,
+gold_ntgt_back.trn_dw_intercept_bet,initial_win_system_price,
+gold_ntgt_back.trn_dw_intercept_bet,initial_place_system_price,
+gold_ntgt_back.trn_dw_intercept_bet,initial_win_liability,
+gold_ntgt_back.trn_dw_intercept_bet,initial_place_liability,
+gold_ntgt_back.trn_dw_intercept_bet,spectrum_book_id,
+gold_ntgt_back.trn_dw_intercept_bet,proposition,
+gold_ntgt_back.trn_dw_intercept_bet,win_amt,
+gold_ntgt_back.trn_dw_intercept_bet,win_price,
+gold_ntgt_back.trn_dw_intercept_bet,win_liability,
+gold_ntgt_back.trn_dw_intercept_bet,place_amt,
+gold_ntgt_back.trn_dw_intercept_bet,place_price,
+gold_ntgt_back.trn_dw_intercept_bet,place_liability,
+gold_ntgt_back.trn_dw_intercept_bet,flexi_percentage,
+gold_ntgt_back.trn_dw_intercept_bet,nbr_bets_in_ticket,
+gold_ntgt_back.trn_dw_intercept_bet,system_1_ind,
+gold_ntgt_back.trn_dw_intercept_bet,system_2_ind,
+gold_ntgt_back.trn_dw_intercept_bet,system_3_ind,
+gold_ntgt_back.trn_dw_intercept_bet,system_4_ind,
+gold_ntgt_back.trn_dw_intercept_bet,system_5_ind,
+gold_ntgt_back.trn_dw_intercept_bet,system_6_ind,
+gold_ntgt_back.trn_dw_intercept_bet,system_7_ind,
+gold_ntgt_back.trn_dw_intercept_bet,system_8_ind,
+gold_ntgt_back.trn_dw_intercept_bet,system_9_ind,
+gold_ntgt_back.trn_dw_intercept_bet,system_10_ind,
+gold_ntgt_back.trn_dw_intercept_bet,twilight_ind,NULL
+gold_ntgt_back.trn_dw_intercept_bet,foreign_acct_num,
+gold_ntgt_back.trn_dw_intercept_bet,foreign_ind,
+gold_ntgt_back.trn_dw_intercept_bet,md_insert_datetime,
+gold_cnsm_c360.vw_spectrum_sports_match,cmd_name,55
+gold_cnsm_c360.vw_spectrum_sports_match,description,SportsEvent.name
+gold_cnsm_c360.vw_spectrum_sports_match,start_time,SportsEvent.startTime
+gold_cnsm_c360.vw_spectrum_sports_match,match_id,SportsEvent.event_ref
+gold_ntgt_back.trn_dw_bet,business_date,
+gold_ntgt_back.trn_dw_bet,ticket_id,
+gold_ntgt_back.trn_dw_bet,hashed_key,
+gold_ntgt_back.trn_dw_bet,bet_nbr_in_tkt,OB - Ticket_bet_Number & Bet_component_Number.xlsx
+gold_ntgt_back.trn_dw_bet,weight_in_ticket,OB - Weight_in_Ticket.xlsx
+gold_ntgt_back.trn_dw_bet,num_legs,"COUNT(DISTINCT bet.state.bets.leg.legNumber)  
+
+FOR BYOS - count the leg numbers per line ID
+
+//count the number of legNumber as in (bet.state.bets.leg.legNumber)"
+gold_ntgt_back.trn_dw_bet,num_sport_types,
+gold_ntgt_back.trn_dw_bet,bet_cost,
+gold_ntgt_back.trn_dw_bet,each_way_ind,"IF(Bet.bet_type_ref IN (""SGL"") && Bet.legType IN (""S"")) THEN 'T'
+ELSE 'F'"
+gold_ntgt_back.trn_dw_bet,md_insert_datetime,
+gold_ntgt_back.trn_dw_bet,expected_return,
+gold_ntgt_back.trn_dw_bet,bet_dividend_amt,"""CASE 
+when bet_refund_ind <> 'T'
+then payout_winnings
+else 0
+as bet_dividend_amt"""
+gold_ntgt_back.trn_dw_bet,bet_refund_amt,"""CASE 
+when bet_refund_ind = 'T'
+then payout_refunds
+else 0
+as bet_refund_amt"""
+gold_ntgt_back.trn_dw_bet,dw_transaction_id,Not Required as per the model
+gold_ntgt_back.trn_dw_bet,dw_bet_category_id,"case when bet_type  in ACC4....20, DBL, TBL then 'M'
+when bet_type in BYOS then 'S'
+when bet_type in SGM then G
+when bet_type is SRM then R
+when bet_type Single then S end as bet_category_code"
+gold_ntgt_back.trn_dw_bet,init_potential_win,Not Required as per the model
+gold_ntgt_back.trn_dw_bet,bkey_transaction,"md5(concat(TSN, business_date, ticket_type, tx_date, tx_time))"
+gold_ntgt_back.trn_dw_bet,ticket_type,Bet Status can be used to derive the logic for ticket type
+gold_ntgt_back.trn_dw_bet,bet_num_in_ticket,trn_bet_detail.ticket_bet_number
+gold_ntgt_back.trn_dw_bet,price_cap,bet.maximum_bet
+gold_ntgt_back.trn_dw_bet,combined_price,
+gold_ntgt_back.trn_dw_bet,effective_combined_price,
+gold_ntgt_back.trn_dw_bet,dw_bet_category_id_level2,"case when bet_type  in ACC4....20, DBL, TBL then 'M'
+when bet_type in BYOS then 'S'
+when bet_type in SGM then G
+when bet_type is SRM then R
+when bet_type Single then S end as bet_category_code"
+gold_ntgt_back.trn_bet_component,business_date,fact_bet_detail.bkey_date
+gold_ntgt_back.trn_bet_component,fixed_odds_book_id,
+gold_ntgt_back.trn_bet_component,ticket_id,fact_bet_detail.bkey_ticket
+gold_ntgt_back.trn_bet_component,hashed_key,Veromo.OB_Bet.tsn
+gold_ntgt_back.trn_bet_component,book_identifier,"category.id,class.id,event.id,market.id,to_date(event.start_time"
+gold_ntgt_back.trn_bet_component,bet_nbr_in_ticket,fact_bet_detail.ticket_bet_number
+gold_ntgt_back.trn_bet_component,leg_num_in_bet,fact_bet_detail.bet_component_number
+gold_ntgt_back.trn_bet_component,component_nbr_in_leg,
+gold_ntgt_back.trn_bet_component,result_type,fact_bet_detail.component_result
+gold_ntgt_back.trn_bet_component,bundle_result,Null
+gold_ntgt_back.trn_bet_component,weight_in_bet,fact_bet_detrai.mt_weight_in_bet_actual
+gold_ntgt_back.trn_bet_component,weight_in_ticket,fact_bet_detail.mt_weight_in_ticket_actual
+gold_ntgt_back.trn_bet_component,pool_type_name,Null
+gold_ntgt_back.trn_bet_component,proposition_name,bet.supportingState.outcome.outcomeName
+gold_ntgt_back.trn_bet_component,proposition_number,bet.supportingState.outcome.outcomeRef
+gold_ntgt_back.trn_bet_component,decided_ctb,OB - mt_leg_decided_amount.xlsx
+gold_ntgt_back.trn_bet_component,refund_ctb,fact_bet_detail.mt_leg_refund_amount
+gold_ntgt_back.trn_bet_component,dividend_ctb,fact_bet_detail.mt_dividend_amount_actual
+gold_ntgt_back.trn_bet_component,bonus_div_amt,"STEP 1: 
+select
+    serial_number_hashed,
+    sum(
+        (
+            case
+                transaction_type_code
+                when 'PAYM'
+                then amount
+                when 'UPYM'
+                then (- amount)
+                else 0
+            end
+        )
+    ) as bonus_div_amt
+from curr_rt_cam_transaction group by serial_number_hashed
+
+STEP 2: 
+case when bet_Status in (Resolved and Partiall Resolved)
+then bonus_div_amt 
+else 0
+
+STEP
+bonus_div_amt * weight_in_ticket = bonus_div_amt_mg"
+gold_ntgt_back.trn_bet_component,component_nbr_in_bet,fact_bet_detail.component_nbr_in_bet
+gold_ntgt_back.trn_bet_component,component_nbr_in_tkt,fact_bet_detail.component_nbr_in_tkt
+gold_ntgt_back.trn_bet_component,component_market_price,fact_bet_detail.mt_component_market_price
+gold_ntgt_back.trn_bet_component,live_bet_indicator,"live_bet_ind =false;
+
+LOOP(bets.leg.legParts){
+ IF(legParts.isInRunning == true) THEN {
+         live_bet_ind = true;
+        break;
+}
+
+""Typically the bet is considered in-running it at least one leg is in-running"" 
+so, to check all isInRunning attribute in all legParts"
+gold_ntgt_back.trn_bet_component,last_resolved_leg_ind,"bet.isSettled = ""true"" && bet.status = ""Active"" "
+gold_ntgt_back.trn_bet_component,cancel_ctb,CASE when context_ref = BET.BET-CANCELLED then new_leg_comp_sell_ctb else 0 end as cancel_ctb
+gold_ntgt_back.trn_bet_component,md_insert_datetime,Metadata column derivation from ETL
+gold_ntgt_back.trn_bet_component,dw_transaction_id,
+gold_ntgt_back.trn_bet_component,feed_managed_ind,"CASE
+WHEN feed_provided_indicator is TRUE
+THEN TRUE
+ELSE FALSE
+END AS feed_managed_ind"
+gold_ntgt_back.trn_bet_component,book_manage_body_id,"(CASE WHEN coalesce(feed_managed_ind, 'F') = 'F' THEN 'BM' ELSE 'SS' END)
+BM : Booking Manager
+SS : Sporting Solutions"
+gold_ntgt_back.trn_bet_component,each_way_ind,"IF(Bet.bet_type_ref IN (""SGL"") && Bet.legType IN (""S"")) THEN 'T'
+ELSE 'F'"
+gold_ntgt_back.trn_bet_component,initial_price,"bets[].leg[].price.decimal
+
+For EW : Win -> bets[].leg[].price.num 
+Place -> 1+ (bets[].leg[].price.num / price.den)"
+gold_ntgt_back.trn_bet_component,new_leg_comp_sell_ctb,fact_bet_detail.mt_sales_amount_actual
+gold_ntgt_back.trn_bet_leg_component_records,account_number,"
+bet.supportingState.customer.accountNumber
+"
+gold_ntgt_back.trn_bet_leg_component_records,bbo_stake_reclaimed_value,"cam_txn_bbo_calculation as (
+
+select
+      promotion_identifier_string,
+            sum(
+                case
+                    when
+                        promotion_identifier_string is not null
+                        and (transaction_type_code = 'ADJ')
+                    then
+                        (
+                            case
+                                coalesce(
+                                    deposit_type_adjust_reason_code, payment_type_code
+                                )
+                                when 'BTS'
+                                then amount
+                                when 'BTSR'
+                                then - amount
+                                else 0
+                            end
+                        )
+                    else 0
+                end
+            ) as bbo_stake_reclaimed_value"
+gold_ntgt_back.trn_bet_leg_component_records,bet_cost,"FOR ALL BET TYPES (EXCEPT BYOS)
+If (header.contextRef= ""BET.BET-PLACEMENT"") 
+THEN bet.state.bets.stake.amount
+
+FOR BYOS
+If (header.contextRef= ""BET.BET-PLACEMENT"") 
+THEN bet.state.bets.stake.amount / bet.lines_number"
+gold_ntgt_back.trn_bet_leg_component_records,bet_dividend_amt,Bet.Payout_winnings
+gold_ntgt_back.trn_bet_leg_component_records,bet_host_id,"CASE (bet.state.betSlip.jurisdictions.account.regionCode)
+        WHEN 'VIC' THEN 'VIC-BV'
+        WHEN 'ACT' THEN 'VIC-BV'
+        WHEN 'NSW' THEN 'NSW-BV'
+        ELSE             'QLD-BV'         
+    END AS bet_host_id"
+gold_ntgt_back.trn_bet_leg_component_records,bet_init_price,"case
+            when all_bets.each_way_ind is true and lower(all_bets.eachway_bet_type) = 'win' then all_bets.leg_price_decimal
+            when all_bets.each_way_ind is true and lower(all_bets.eachway_bet_type) = 'place' then (all_bets.price_fixed_odds_place_price_numerator/all_bets.price_fixed_odds_place_price_denominator)+1
+            else all_bets.price_decimal
+        end as bet_init_price"
+gold_ntgt_back.trn_bet_leg_component_records,bet_leg_settle_datetime,trn_bet_detail.bet_leg_settle_datetime
+gold_ntgt_back.trn_bet_leg_component_records,bet_nbr_in_tkt,OB - Ticket_bet_Number & Bet_component_Number.xlsx
+gold_ntgt_back.trn_bet_leg_component_records,bet_refund_amt,Bet.Payout_refunds
+gold_ntgt_back.trn_bet_leg_component_records,bet_result,"IF Bet.lines.voided = Bet.lines.number
+     OR payout.refunds = stake.amount
+THEN bet_result = 'RFE'
+
+ELSE IF payout.winnings > 0
+     OR Bet.lines.win >= 1
+THEN bet_result = 'WIN'
+
+ELSE
+    bet_result = 'LSE'"
+gold_ntgt_back.trn_bet_leg_component_records,bet_status,"Bet Status Logic: 
+bet_status = 'Resolved' : 
+    (b.status in ('ACTIVE','SUSPENDED') and b.is_settled is True ) or ((b.status = 'CASHED_OUT' and b.settled_how = 'C') or (mh.context_ref) = 'BET.BET-CASHOUT')
+bet_status = 'Unresolved':
+    (b.status in ('ACTIVE','SUSPENDED') and b.is_settled is False and b.lines_win = 0 and b.lines_lose = 0)
+bet_status = 'Partially_resolved':
+    (b.status in ('ACTIVE','SUSPENDED') and b.is_settled is False and b.lines_number > b.lines_win + b.lines_lose and (b.lines_win > 0 or b.lines_lose > 0))
+bet_status = 'Cancelled'
+    case when  b.status = 'CANCELED' and b.settled_how = 'M'
+
+Alias : 
+    b --> slvr_crtd_rt_back.veromo_ob_bet
+    mh --> slvr_crtd_rt_back.veromo_ob_message_header
+
+Filters to be applied :
+    Ignore PENDING Status : ( b.status <> 'PENDING') 
+    Ignore CANCELED Status when settled_how is 'S' :  (b.status = 'CANCELED' AND b.settled_how = 'S')"
+gold_ntgt_back.trn_bet_leg_component_records,bet_taken_price,"case
+
+ ÊÊÊÊÊÊÊÊÊÊ whenÊeach_way_indÊisÊtrueÊthenÊall_bets.payout_potential/bet_cost
+
+ ÊÊÊÊÊÊÊÊÊÊ elseÊall_bets.combined_odds
+
+ ÊÊÊÊÊÊ endÊasÊbet_taken_price"
+gold_ntgt_back.trn_bet_leg_component_records,bet_taken_price_actual,"case
+
+ ÊÊÊÊÊÊÊÊÊÊ whenÊeach_way_indÊisÊtrueÊthenÊ0
+
+ ÊÊÊÊÊÊÊÊÊÊ elseÊbet_taken_price
+
+ ÊÊÊÊÊÊ endÊasÊmt_bet_taken_price_actual"
+gold_ntgt_back.trn_bet_leg_component_records,bet_ticket_type,"IF (bet.state.bets.betTypeRef = ""SGL"" &&  bet.state.bets.leg.legSort = ""BB""  ) 
+     THEN 
+         IF SupportingState.Outcome.categoryRef IN   ('GREYHOUNDS', 'HARNESS_RACING', 'VR_HORSE_RACING', 'HORSE_RACING', 'RACING_EXTRAS', 'JOCKEY_CHALLENGE') 
+               THEN SRM
+               ELSE SGM
+         ELSE 
+              ""SGL""
+     ELSE 
+            bet.state.bets.betTypeRef"
+gold_ntgt_back.trn_bet_leg_component_records,bet_turnover,OB_bet_turnover.xlsx
+gold_ntgt_back.trn_bet_leg_component_records,bet_type_id,SportsMarketTemplate.id
+gold_ntgt_back.trn_bet_leg_component_records,bet_type_name,SportsMarketTemplate.name
+gold_ntgt_back.trn_bet_leg_component_records,bkey_account,"If  ""bets.accountTrait"" = ""ACCT_TRAIT_ACCOUNT""  
+THEN bet.supportingState.customer.accountNumber
+ELSE NULL"
+gold_ntgt_back.trn_bet_leg_component_records,bkey_bet_detail,
+gold_ntgt_back.trn_bet_leg_component_records,bkey_customer_id,
+gold_ntgt_back.trn_bet_leg_component_records,bkey_date,
+gold_ntgt_back.trn_bet_leg_component_records,bkey_event,
+gold_ntgt_back.trn_bet_leg_component_records,bkey_financial_jurisdiction,"IF(Bet.accountTrait = """"ACCT_TRAIT_ANONYMOUS"""") THEN bet.state.betSlip.jurisdictions.terminal.regionCode;
+ELSE
+bet.state.betSlip.jurisdictions.account.regionCode;
+"
+gold_ntgt_back.trn_bet_leg_component_records,bkey_outlet,
+gold_ntgt_back.trn_bet_leg_component_records,bkey_pool_id,Null
+gold_ntgt_back.trn_bet_leg_component_records,bkey_product,"LOOP(Bet.Leg.LegPart)
+{
+IF(SupportingState.Outcome.categoryRef IN ('GREYHOUNDS', 'HARNESS_RACING', 'VR_HORSE_RACING', 'HORSE_RACING', 'RACING_EXTRAS', 'JOCKEY_CHALLENGE')) THEN
+""SBETR""
+ELSE
+""SBET""
+}"
+gold_ntgt_back.trn_bet_leg_component_records,bkey_ticket,
+gold_ntgt_back.trn_bet_leg_component_records,bonus_bet_flag,"IF(Bet.Stake.bonusAmount > 0) THEN ""T""
+ELSE ""F"""
+gold_ntgt_back.trn_bet_leg_component_records,bonus_div_amt,
+gold_ntgt_back.trn_bet_leg_component_records,bonus_div_multiplier,
+gold_ntgt_back.trn_bet_leg_component_records,book_identifier,"category.id,class.id,event.id,market.id,to_date(event.start_time"
+gold_ntgt_back.trn_bet_leg_component_records,bundle_effv_price,Null
+gold_ntgt_back.trn_bet_leg_component_records,bundle_init_price,Null
+gold_ntgt_back.trn_bet_leg_component_records,bundle_num_in_bet,Null
+gold_ntgt_back.trn_bet_leg_component_records,bundle_result,Null
+gold_ntgt_back.trn_bet_leg_component_records,business_date,"CAM date will be used 
+(to be confirmed from Veremo)
+We are looking for CAM EOD day data for this for which CR to to raised and it  was discussed it will come in UTC and later cane be converted in AEST by DIVA"
+gold_ntgt_back.trn_bet_leg_component_records,business_line,
+gold_ntgt_back.trn_bet_leg_component_records,cash_out_ind,"header.contextRef = (""BET.BET-PARTIAL-CASHOUT"" || ""BET.BET-CASHOUT"")
+&& 
+bets.cashout.cashedOutStake >0 
+CashOut is an optional attribute appear when bets.cashOut.Action = ""CASHOUT"""
+gold_ntgt_back.trn_bet_leg_component_records,cash_out_pay_amt,Bet.Cashout.payout * leg_comp_weight_in_tkt
+gold_ntgt_back.trn_bet_leg_component_records,cash_out_percentage,
+gold_ntgt_back.trn_bet_leg_component_records,clp_campaign_descr,"substring(clp_offer_code, 2, 8) as clp_campaign_descr"
+gold_ntgt_back.trn_bet_leg_component_records,clp_flg,"case
+            when (lower(tag_code) = 'protok') then T else F
+ "
+gold_ntgt_back.trn_bet_leg_component_records,clp_offer_type,"substr(cam.clp_offer_code, 1, 1) as clp_offer_type"
+gold_ntgt_back.trn_bet_leg_component_records,component_market_price,
+gold_ntgt_back.trn_bet_leg_component_records,component_nbr_in_bet,OB - Ticket_bet_Number & Bet_component_Number.xlsx
+gold_ntgt_back.trn_bet_leg_component_records,component_nbr_in_tkt,"Just a sequential number generated for a bet.. 
+holds no relevance.
+purely on how we generate a sequence number in OB
+Format - XXXXYYYYZZZZ where X is Line, Y is Leg and Z is LegPart all appended with 0 to the lenght of 4. 
+
+e.g. Line - 1, Leg - 3 and LegPart - 20 will be 00001000300020 "
+gold_ntgt_back.trn_bet_leg_component_records,component_result,all_bets.component_result as component_result
+gold_ntgt_back.trn_bet_leg_component_records,cross_parlay_indicator, all_bets.cross_parlay_ind as cross_parlay_indicator
+gold_ntgt_back.trn_bet_leg_component_records,cross_sport_indicator,"Step 1 : Calculate num_sport_types by grouping on the basis of hashed_key, business_Date and ticket_bet_number
+
+Step 2 : CASE WHEN num_sport_types > 1 THEN 'T' ELSE 'F' END AS cross_sport_indicator,
+
+
+"
+gold_ntgt_back.trn_bet_leg_component_records,customer_number,From account number we will derive the Customer Number From CAM
+gold_ntgt_back.trn_bet_leg_component_records,device_name,
+gold_ntgt_back.trn_bet_leg_component_records,device_type_name,
+gold_ntgt_back.trn_bet_leg_component_records,dividend_amt,trn_bet_detail.mt_dividend_amount_actual
+gold_ntgt_back.trn_bet_leg_component_records,dw_bet_category_id,
+gold_ntgt_back.trn_bet_leg_component_records,dw_financial_domain_id,
+gold_ntgt_back.trn_bet_leg_component_records,dw_product_group_id,"CASE 
+WHEN SupportingState.Outcome.category_Ref IN ('GREYHOUNDS', 'HARNESS_RACING', 'VR_HORSE_RACING', 'HORSE_RACING', 'RACING_EXTRAS', 'JOCKEY_CHALLENGE') 
+THEN 5
+ELSE 1
+END  as dw_product_group_id"
+gold_ntgt_back.trn_bet_leg_component_records,dw_tran_type_id,"CASE
+WHEN BET.BET-PLACEMENT Then 2
+BET.BET-CANCELLATION Then 23
+BET.BET-PARTIAL-CASHOUT Then 35
+BET.SETTLEMENT Then 36
+BET.BET-CASHOUT Then 54
+END"
+gold_ntgt_back.trn_bet_leg_component_records,dw_transaction_id,"cast(0 as decimal(12,0)) as dw_transaction_id"
+gold_ntgt_back.trn_bet_leg_component_records,each_way_ind,"IF(Bet.bet_type_ref IN (""SGL"") && Bet.legType IN (""S"")) THEN 'T'
+ELSE 'F'"
+gold_ntgt_back.trn_bet_leg_component_records,effective_price,
+gold_ntgt_back.trn_bet_leg_component_records,expected_return,all_bets.expected_return as expected_return
+gold_ntgt_back.trn_bet_leg_component_records,feed_managed_ind,"CASE
+WHEN feed_provided_indicator is TRUE
+THEN TRUE
+ELSE FALSE
+END AS feed_managed_ind"
+gold_ntgt_back.trn_bet_leg_component_records,flexi_bet_ind,"
+IF(Bet.betTypeRef==""BYOS"") THEN true
+ELSE false;"
+gold_ntgt_back.trn_bet_leg_component_records,funding_type_desc,"IF accountTrait == ""ACCT_TRAIT_ACCOUNT"" THEN
+""TAB Account""
+ELSE
+   from ""Cash""
+END"
+gold_ntgt_back.trn_bet_leg_component_records,gid_terminal_num,all_bets.gid_terminal_num as gid_terminal_num
+gold_ntgt_back.trn_bet_leg_component_records,hashed_key,all_bets.bkey_ticket as hashed_key
+gold_ntgt_back.trn_bet_leg_component_records,init_potential_win,all_bets.init_potential_win as init_potential_win
+gold_ntgt_back.trn_bet_leg_component_records,initial_price,all_bets.initial_price as initial_price
+gold_ntgt_back.trn_bet_leg_component_records,is_bet_cancelled_ind,"IF Bet.Status=""CANCELLED"" && SettledHow = ""M"" THEN ""Y""
+ELSE ""N"""
+gold_ntgt_back.trn_bet_leg_component_records,is_bet_decided_ind,"IF bets.isSettled = ""T"" ELSE ""F"""
+gold_ntgt_back.trn_bet_leg_component_records,last_resolved_leg_ind,"bet.isSettled = ""true"" && bet.status = ""Active"" "
+gold_ntgt_back.trn_bet_leg_component_records,leg_bet_type,all_bets.leg_bet_type as leg_bet_type
+gold_ntgt_back.trn_bet_leg_component_records,leg_bet_type_wid,"CASE
+WHEN leg_bet_type is Win THEN 1
+WHEN leg_bet_type is Place THEN 2
+WHEN leg_bet_type is Each Way THEN 3
+WHEN leg_bet_type is SGM THEN 61
+WHEN leg_bet_type is SRM THEN 62
+END as leg_bet_type_wid"
+gold_ntgt_back.trn_bet_leg_component_records,leg_comp_num,(all_bets.bet_component_number%1000) as leg_comp_num
+gold_ntgt_back.trn_bet_leg_component_records,leg_dividend_ctb,"trn_bet_detail.mt_dividend_amount_actual
+
+CASE 
+WHEN leg_dividend_ind = 'TRUE'
+THEN payout_winnings / num_of legs
+ELSE 0
+END as leg_dividend_ctb"
+gold_ntgt_back.trn_bet_leg_component_records,leg_dividend_ind,"case
+    when fact_bet_detail.mt_dividend_amount_actual=0 then 'F'
+    when fact_bet_detail.mt_dividend_amount_actual>0 and leg_refund_ind = 'T' then 'F'
+    when fact_bet_detail.mt_dividend_amount_actual>0 and leg_refund_ind = 'F' then 'T'
+  end as leg_dividend_ind"
+gold_ntgt_back.trn_bet_leg_component_records,leg_effv_price,Null
+gold_ntgt_back.trn_bet_leg_component_records,leg_init_price,"case 
+            when all_bets.each_way_ind is true and lower(all_bets.eachway_bet_type) = 'win' then leg_price_decimal
+            when all_bets.each_way_ind is true and lower(all_bets.eachway_bet_type) = 'place' then (leg_price_num*1.0/leg_price_den)+1
+            else leg_price_decimal
+        end as leg_init_price"
+gold_ntgt_back.trn_bet_leg_component_records,leg_num_in_bet,
+gold_ntgt_back.trn_bet_leg_component_records,leg_refund_ctb,
+gold_ntgt_back.trn_bet_leg_component_records,leg_refund_ind,"IF Linedetail.Payout_refunds > 0 
+THEN TRUE
+ELSE FALSE"
+gold_ntgt_back.trn_bet_leg_component_records,leg_sell_ctb,OB - mt_leg_investment_amount.xlsx
+gold_ntgt_back.trn_bet_leg_component_records,leg_type,"case
+            when all_bets.leg_bet_type = 'Win' then 'W'
+            when all_bets.leg_bet_type = 'Place' then 'P'
+            when all_bets.leg_bet_type = 'Same Race Multibet' then 'R'
+            when all_bets.leg_bet_type = 'Same Game Multibet' then 'G'
+            when all_bets.leg_bet_type = 'Each Way' then 'WP'
+        end as leg_type"
+gold_ntgt_back.trn_bet_leg_component_records,leg_weight_in_bet,OB - Weight_in_Bet.xlsx
+gold_ntgt_back.trn_bet_leg_component_records,liability_amt,"SGL 
+bet.state.bets.settledAt = Business date for CAM EOD
+bet.state.bets.betTypeRef = SGL 
+bet.state.bets.status = ACTIVE
+bet.state.bets.isSettled = TRUE
+SUM OF bet.state.bets.payout.winnings
+
+OTHERS
+bet.state.bets.settledAt = Business date for CAM EOD
+bet.state.bets.betTypeRef <> SGL 
+bet.state.bets.status = ACTIVE
+bet.state.bets.isSettled = TRUE
+SUM OF bet.state.bets.payout.winnings"
+gold_ntgt_back.trn_bet_leg_component_records,live_bet_ind,trn_bet_detail.live_bet_ind
+gold_ntgt_back.trn_bet_leg_component_records,md_file_business_date,"CAM date will be used 
+(to be confirmed from Veremo)
+We are looking for CAM EOD day data for this for which CR to to raised and it  was discussed it will come in UTC and later cane be converted in AEST by DIVA"
+gold_ntgt_back.trn_bet_leg_component_records,md_insert_datetime,Metadata column derivation from ETL
+gold_ntgt_back.trn_bet_leg_component_records,mt_bet_revenue_amount_actual,bet_turnover (MINUS) mt_dividend_amount_actual
+gold_ntgt_back.trn_bet_leg_component_records,mt_bet_turnover_amount_actual,mt_bet_turnover_amount_actual = tkt_cost - bet_refund_amt
+gold_ntgt_back.trn_bet_leg_component_records,mt_cash_out_amount_actual,Null
+gold_ntgt_back.trn_bet_leg_component_records,mt_generosity_amount_actual,"coalesce(bonus_div_amt_mg, 0)+coalesce(bonus_bet_cost_amount, 0) + mt_generosity_cashback_amount_actual as mt_generosity_amount_actual"
+gold_ntgt_back.trn_bet_leg_component_records,mt_generosity_bonus_bet_redemption_amount_actual,bonus_bet_cost_amount as mt_generosity_bonus_bet_redemption_amount_actual
+gold_ntgt_back.trn_bet_leg_component_records,mt_generosity_cashback_amount_actual,"cast(0 as decimal(38,6)) as mt_generosity_cashback_amount_actual"
+gold_ntgt_back.trn_bet_leg_component_records,mt_generosity_multiplier_dividend,bonus_div_amt_mg as mt_generosity_multiplier_dividend_amount_actual
+gold_ntgt_back.trn_bet_leg_component_records,mt_leg_decided_amount,OB - mt_leg_decided_amount
+gold_ntgt_back.trn_bet_leg_component_records,mt_leg_investment_amount,OB - mt_leg_investment_amount.xlsx
+gold_ntgt_back.trn_bet_leg_component_records,mt_leg_refund_amount,"Resolved- bet.status = ""Active"" && bet.isSettled=""true""  -- THEN
+Bet.Payout.refunds ELSE 0; 
+https://mytabcorp.sharepoint.com/:x:/s/FixedOddsNextGeneration/IQC6mwqsLM_iS4EjHL8HfhjZATwb430X-KmQDruHot-RO_U?e=MeZrGi"
+gold_ntgt_back.trn_bet_leg_component_records,mt_leg_stake_reclaimed_amount,"case 
+            when lower(bet_Status) not in ('unresolved') then round( coalesce(bbo_stake_reclaimed_value, 0) * weight_in_ticket, 6)
+            else 0
+        end as leg_stake_reclaimed_amount,Null as mt_leg_stake_reclaimed_amount"
+gold_ntgt_back.trn_bet_leg_component_records,mt_revenue_amount_actual,"coalesce(decided_ctb,0)-coalesce((mt_leg_refund_amount*1.0)/num_comp_in_leg,0)-coalesce(mt_dividend_amount_actual,0) as mt_revenue_amount_actual"
+gold_ntgt_back.trn_bet_leg_component_records,mt_revenue_net_amount_actual,"case 
+            when lower(all_bets.bet_status)  in ('resolved', 'partially resolved') then decided_ctb - (mt_leg_refund_amount*1.0)/num_comp_in_leg - mt_dividend_amount_actual - coalesce(bonus_div_amt_mg,cast(0 as decimal(38,6))) - coalesce(bonus_bet_cost_amount,cast(0 as decimal(38,6)))
+            else 0 
+        end as mt_revenue_net_amount_actual"
+gold_ntgt_back.trn_bet_leg_component_records,mt_sales_amount_actual,OB - mt_leg_investment_amount.xlsx
+gold_ntgt_back.trn_bet_leg_component_records,mt_turnover_amount_actual,mt_bet_turnover_amount_actual = tkt_cost - bet_refund_amt
+gold_ntgt_back.trn_bet_leg_component_records,mt_weight_in_bet_actual,OB - Weight_in_Bet.xlsx
+gold_ntgt_back.trn_bet_leg_component_records,num_comp_in_leg,"cast(size(
+            collect_set(all_bets.part_number) OVER (
+                PARTITION BY all_bets.id,
+                            all_bets.header_business_date,
+                            all_bets.line_id,
+                            all_bets.leg_number,
+                            all_bets.leg_type
+            )
+        ) as bigint) AS num_comp_in_leg"
+gold_ntgt_back.trn_bet_leg_component_records,num_legs,"COUNT(DISTINCT bet.state.bets.leg.legNumber)  
+
+FOR BYOS - count the leg numbers per line ID
+
+//count the number of legNumber as in (bet.state.bets.leg.legNumber)"
+gold_ntgt_back.trn_bet_leg_component_records,num_legs_in_bet,all_bets.num_legs as num_legs_in_bet
+gold_ntgt_back.trn_bet_leg_component_records,num_sport_types,COUNT(DISTINCT Sport_name) Reference bet_supportingstate_outcome table to get distinct sport name for a bet
+gold_ntgt_back.trn_bet_leg_component_records,outlet_id,all_bets.wgrg_outlet_id as outlet_id
+gold_ntgt_back.trn_bet_leg_component_records,pool_type_name,Null
+gold_ntgt_back.trn_bet_leg_component_records,product_group,"CASE 
+WHEN dw_product_group_id = 1
+THEN Sportsbet
+WHEN dw_product_group_id = 5 THEN Sportsbet Racing ELSE 0
+END  as dw_product_group_id"
+gold_ntgt_back.trn_bet_leg_component_records,product_line,"SBET
+SBETR"
+gold_ntgt_back.trn_bet_leg_component_records,promotion_type,"CASE    
+    WHEN bets.tags.code = 'PROTOK' THEN 
+        CASE LEFT(bets.tags.value, 1)
+            WHEN 'M' THEN 'Promotional Bets'
+            WHEN 'T' THEN 'Bonus Bets'
+            ELSE NULL
+END AS promotion_type"
+gold_ntgt_back.trn_bet_leg_component_records,prop_clarifier,trn_bet_detail.pool_type_name
+gold_ntgt_back.trn_bet_leg_component_records,prop_initial_sell_share,bet.supportingState.outcome.outcomeName
+gold_ntgt_back.trn_bet_leg_component_records,proposition_name,bet.supportingState.outcome.outcomeRef
+gold_ntgt_back.trn_bet_leg_component_records,proposition_number,all_bets.proposition_number as proposition_number
+gold_ntgt_back.trn_bet_leg_component_records,record_inserted_timestamp,The timestamp the record was created in the table
+gold_ntgt_back.trn_bet_leg_component_records,record_type,"CASE
+WHEN BET.BET-PLACEMENT Then 465
+BET.BET-CANCELLATION Then 465
+BET.BET-PARTIAL-CASHOUT Then 482
+BET.SETTLEMENT Then 466
+BET.BET-CASHOUT Then 488
+END as record_type"
+gold_ntgt_back.trn_bet_leg_component_records,record_updated_timestamp,current_timestamp() as record_updated_timestamp
+gold_ntgt_back.trn_bet_leg_component_records,residual_amt,We might still need to calculate it (dicuss with Sachin)
+gold_ntgt_back.trn_bet_leg_component_records,retail_loyalty_card_number,NULL
+gold_ntgt_back.trn_bet_leg_component_records,sales_type_name,all_bets.sales_type_name as sales_type_name
+gold_ntgt_back.trn_bet_leg_component_records,selection_leg,(all_bets.bet_component_number div 1000) as  selection_leg
+gold_ntgt_back.trn_bet_leg_component_records,sell_business_date,trn_bet_detail.sell_bus_date
+gold_ntgt_back.trn_bet_leg_component_records,selling_format,Bet Status can be used to derive the logic for ticket type
+gold_ntgt_back.trn_bet_leg_component_records,sport_name,all_bets.sport_name as sport_name
+gold_ntgt_back.trn_bet_leg_component_records,sub_outl_window,all_bets.sub_outl_window as sub_outl_window
+gold_ntgt_back.trn_bet_leg_component_records,tdw_cash_out_actual_amt,NULL
+gold_ntgt_back.trn_bet_leg_component_records,ticket_single_or_multi,"IF  ""bet.state.bets.betTypeRef"" = ""SGL"" THEN  'SINGLE' ELSE 'MULTI'"
+gold_ntgt_back.trn_bet_leg_component_records,ticket_type,"IF (bet.state.bets.betTypeRef = ""SGL"" &&  bet.state.bets.leg.legSort = ""BB""  ) 
+     THEN 
+         IF SupportingState.Outcome.categoryRef IN   ('GREYHOUNDS', 'HARNESS_RACING', 'VR_HORSE_RACING', 'HORSE_RACING', 'RACING_EXTRAS', 'JOCKEY_CHALLENGE') 
+               THEN SRM
+               ELSE SGM
+         ELSE 
+              ""SGL""
+     ELSE 
+            bet.state.bets.betTypeRef"
+gold_ntgt_back.trn_bet_leg_component_records,tkt_cost,"If (header.contextRef= ""BET.BET-PLACEMENT"") 
+THEN bet.state.bets.stake.amount
+
+all_bets.stake_amount + coalesce(all_bets.cashout_stake_total,0)"
+gold_ntgt_back.trn_bet_leg_component_records,tran_datetime,all_bets.trans_datetime as tran_datetime
+gold_ntgt_back.trn_bet_leg_component_records,tx_date,all_bets.trans_date as tx_date
+gold_ntgt_back.trn_bet_leg_component_records,tx_time,all_bets.trans_datetime as tx_time
+gold_ntgt_back.trn_bet_leg_component_records,weight_in_leg,all_bets.new_leg_weight_in_tkt as weight_in_leg
+gold_ntgt_back.trn_bet_leg_component_records,weight_in_ticket,"case 
+            when (lower(all_bets.bet_status) = 'resolved' and all_bets.each_way_ind is false) then (new_leg_weight_in_tkt/num_comp_in_leg) 
+            when (lower(all_bets.bet_status) = 'resolved' and all_bets.each_way_ind is true and lower(all_bets.eachway_bet_type) = 'win') then all_bets.stake_stake_win/all_bets.stake_amount
+            when (lower(all_bets.bet_status) = 'resolved' and all_bets.each_way_ind is true and lower(all_bets.eachway_bet_type) = 'place') then all_bets.stake_stake_place/all_bets.stake_amount
+            else 0
+        end as weight_in_ticket"
+gold_ntgt_back.trn_bet_leg_component_records,wgrg_outl_id,all_bets.wgrg_outlet_id as wgrg_outl_id
+gold_cnsm_c360.vw_spectrum_betstreamprop,transaction_date_time,header.timeStamp
+gold_cnsm_c360.vw_spectrum_betstreamprop,business_date,"CAM RaceDate
+header.timeStamp"
+gold_cnsm_c360.vw_spectrum_betstreamprop,event_date,"Bet.SupportingState.Outcome.eventStartTime
+OR
+SportsEvent.startTime"
+gold_cnsm_c360.vw_spectrum_betstreamprop,transaction_time,header.timeStamp
+gold_cnsm_c360.vw_spectrum_betstreamprop,transaction_type,Sport_Bet
+gold_cnsm_c360.vw_spectrum_betstreamprop,bet_type,"IF(Bet.betTypeRef==""SGL"") THEN {	
+	IF(Bet.legType==""W"") THEN ""WN""; //Win
+	IF(Bet.legType==""L"") THEN ""PL""; //Place
+	IF(Bet.legType==""I"" || Bet.legType==""S"") THEN ""EW""; //Eachway
+} ELSE IF(Bet.betTypeRef==""BYOS"") THEN {
+     ""SM""; //Super Multi
+} ELSE IF(Bet.betTypeRef NOT IN (""SGL"",""BYOS)) THEN{
+     ""ML""; //Standard Multi
+} ELSE IF(Bet.betTypeRef==""SGL"" && Bet.Leg.legSort==""BB"") THEN{
+     ""ML""; //SGM/SRM
+}"
+gold_cnsm_c360.vw_spectrum_betstreamprop,bet_amount,bet.state.bets.stake.amount (Original)
+gold_cnsm_c360.vw_spectrum_betstreamprop,bet_liability,bet.state.bets.payout.potential 
+gold_cnsm_c360.vw_spectrum_betstreamprop,price,"IF(bet.state.bets.legType IN (""I"", ""S"")) THEN //EachWay
+{
+	For WIN Leg : bet.state.bets.Leg.LegPart.price.decimal;
+	For PLACE Leg : (fixedOddsPlacePriceNumerator/fixedOddsPlacePriceDenominator) + 1;
+}
+ELSE //Other scenarios
+{
+	bet.state.bets.Leg.LegPart.price.decimal;
+}"
+gold_cnsm_c360.vw_spectrum_betstreamprop,customer_number,"IF(Bet.accountTrait == ""ACCT_TRAIT_ACCOUNT"") THEN {
+select customer_number from dim_customer 
+where bkey_customer_id = (select bkey_customer_id from dim_account where account_number = SupportingState.Customer.accountNumber) }"
+gold_cnsm_c360.vw_spectrum_betstreamprop,account_number,"IF(Bet.accountTrait == ""ACCT_TRAIT_ACCOUNT"") THEN {
+   SupportingState.Customer.accountNumber; }"
+gold_cnsm_c360.vw_spectrum_betstreamprop,community,"IF(Bet.accountTrait == ""ACCT_TRAIT_ANONYMOUS"") THEN bet.state.betSlip.jurisdictions.terminal.regionCode;
+ELSE
+bet.state.betSlip.jurisdictions.account.regionCode;
+
+**SA is expected to be represented as ""SAT"" - from sample data & as highlighted by Props team"
+gold_cnsm_c360.vw_spectrum_betstreamprop,future_id,
+gold_cnsm_c360.vw_spectrum_betstreamprop,match,"Bet.SupportingState.Outcome.eventName
+OR
+SportsEvent.name"
+gold_cnsm_c360.vw_spectrum_betstreamprop,sport,"Bet.SupportingState.Outcome.categoryRef
+OR
+SportsCategory.name"
+gold_cnsm_c360.vw_spectrum_betstreamprop,serial_number,SHA1(Bet.id)
+gold_cnsm_c360.vw_spectrum_betstreamprop,description,
+gold_cnsm_c360.vw_spectrum_betstreamprop,retail_outlet_name,"IF(Bet.accountTrait == ""ACCT_TRAIT_ANONYMOUS"") THEN{
+Get Venue name from dim_venue for the Venue Code
+}"
+gold_cnsm_c360.vw_spectrum_betstreamprop,prop_id,"IF(Bet.Leg.LegPart.tags.code=""RC_OC"") THEN
+        Bet.Leg.LegPart.tags.value;"
+gold_cnsm_c360.vw_spectrum_betstreamprop,prop_price,"IF(bet.state.bets.legType IN (""I"", ""S"")) THEN //EachWay
+{
+	For WIN Leg : bet.state.bets.Leg.LegPart.price.decimal;
+	For PLACE Leg : (fixedOddsPlacePriceNumerator/fixedOddsPlacePriceDenominator) + 1;
+}
+ELSE //Other scenarios
+{
+	bet.state.bets.Leg.LegPart.price.decimal;
+}"
+gold_cnsm_c360.vw_spectrum_betstreamprop,prop_type,
+gold_cnsm_c360.vw_spectrum_betstreamprop,number_of_legs,"no_of_legs = 0;
+
+IF(Bet.legType in (""I"" ,""S"")) THEN { //For EachWay Bet 
+no_of_legs = 2;
+}
+ELSE IF(Bet.Leg.legSort in (""BB"" ,""CM"") )THEN  //(condition for SGM/SRM/Super Multis scenarios){
+     no_of_legs =  COUNT(Bet.Leg.LegPart);
+}
+ELSE{
+     no_of_legs = COUNT(Bet.Leg);
+}"
+gold_cnsm_c360.vw_spectrum_betstreamprop,source,"** Exact maping is not possible in OB. in Spectrum mapping to a list of values is possible with help of Channel, Jurisdiction & an additional attribute. However in OB, we just have Channel & Jurisdiction info available for mapping.
+
+Select Channel from ProposedSalesChannels (2nd table on confluence)
+WHERE channel_id(OpenBet) = bet.bets.source.channelRef
+
+Possible Source Values in OB as per above logic:
+CallCentre-Operator, CallCentre-Self, CustSupport, Digital, Retail-Cash,Retail-Account, etc"
+gold_cnsm_c360.vw_spectrum_betstreamprop,combo_base_value,"1. SGL - Bet Amount
+2. EW - As per I & S scenarios
+3. ML & SM - Bet amount in 1st leg
+
+IF(Bet.betTypeRef==""SGL""){
+	IF(bet.state.bets.legType == ""I"") THEN {//Stake equally divided between WIN & Place lines
+		bet.state.bets.stake.stakePerLine;}
+	ELSE IF(bet.state.bets.legType == ""S"") THEN {//Explicitly defined stakes for the Win and Place lines (Split-stake)  
+		bet.state.bets.stake.stakeWin;//for Win leg
+		bet.state.bets.stake.stakePlace;//for Place leg
+	}
+ELSE
+	bet.state.bets.stake.amount (Original);
+}
+ELSE{ //ML & SM (SRM/SGM considered under Multi)
+	IF(bet.state.bets.Leg.legNumber==1 && bet.state.bets.Leg.LegPart.partNumber==1)  THEN 
+		bet.state.bets.stake.amount (Original);
+}"
+gold_cnsm_c360.vw_spectrum_betstreamprop,promo_string,"IF(Bet.tags.code=""PROTOK"") THEN //Promo Token
+ÊBet.tags.value;
+
+IF(Bet.tags.code=""PROAMT"") THEN //Promo Amount
+ Bet.tags.value;
+
+Note: Promo Token will start with 'M' & the rest will be the multipllier factor."
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,account_number,"IF(Bet.accountTrait == ""ACCT_TRAIT_ACCOUNT"") THEN {
+   SupportingState.Customer.accountNumber; }"
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,customer_number,"IF(Bet.accountTrait == ""ACCT_TRAIT_ACCOUNT"") THEN {
+select customer_number from dim_customer 
+where bkey_customer_id = (select bkey_customer_id from dim_account where account_number = SupportingState.Customer.accountNumber) }"
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,bet_amount,bet.state.bets.stake.amount (Original)
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,serial_number,SHA1(Bet.id)
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,bet_type,"IF(Bet.betTypeRef==""SGL"") THEN {	
+	IF(Bet.legType==""W"") THEN ""WN""; //Win
+	IF(Bet.legType==""L"") THEN ""PL""; //Place
+	IF(Bet.legType==""I"" || Bet.legType==""S"") THEN ""EW""; //Eachway
+} ELSE IF(Bet.betTypeRef==""BYOS"") THEN {
+     ""SM""; //Super Multi
+} ELSE IF(Bet.betTypeRef NOT IN (""SGL"",""BYOS)) THEN{
+     ""ML""; //Standard Multi
+} ELSE IF(Bet.betTypeRef==""SGL"" && Bet.Leg.legSort==""BB"") THEN{
+     ""ML""; //SGM/SRM
+}"
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,community,"IF(Bet.accountTrait == ""ACCT_TRAIT_ANONYMOUS"") THEN bet.state.betSlip.jurisdictions.terminal.regionCode;
+ELSE
+bet.state.betSlip.jurisdictions.account.regionCode;
+
+**SA is expected to be represented as ""SAT"" - from sample data & as highlighted by Props team"
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,bet_liability,"1. SGL(WN/PL/SGM/SRM), ML
+Potential liability = bet.state.bets.payout.potential
+Equivalent to Bet Amount * Price
+
+2. EW - Only win component is considered
+Base Win Value  * Price
+
+3. SM 
+Refer 'SuperMultiLiabilityCalculationStepsWithSamples.docx'
+
+"
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,number_of_legs,"no_of_legs = 0;
+
+IF(Bet.legType in (""I"" ,""S"")) THEN { //For EachWay Bet 
+no_of_legs = 2;
+}
+ELSE IF(Bet.Leg.legSort in (""BB"" ,""CM"") )THEN  //(condition for SGM/SRM/Super Multis scenarios){
+     no_of_legs =  COUNT(Bet.Leg.LegPart);
+}
+ELSE{
+     no_of_legs = COUNT(Bet.Leg);
+}"
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,ticket_payout_amount,To be updated by Mayank
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,ticket_refund_amount,To be updated by Mayank
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,cashedout_portion_amount,
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,combo_base_value,"1. SGL - Bet Amount
+2. EW - As per I & S scenarios
+3. ML & SM - Bet amount in 1st leg
+
+IF(Bet.betTypeRef==""SGL""){
+	IF(bet.state.bets.legType == ""I"") THEN {//Stake equally divided between WIN & Place lines
+		bet.state.bets.stake.stakePerLine;}
+	ELSE IF(bet.state.bets.legType == ""S"") THEN {//Explicitly defined stakes for the Win and Place lines (Split-stake)  
+		bet.state.bets.stake.stakeWin;//for Win leg
+		bet.state.bets.stake.stakePlace;//for Place leg
+	}
+ELSE
+	bet.state.bets.stake.amount (Original);
+}
+ELSE{ //ML & SM (SRM/SGM considered under Multi)
+	IF(bet.state.bets.Leg.legNumber==1 && bet.state.bets.Leg.LegPart.partNumber==1)  THEN 
+		bet.state.bets.stake.amount (Original);
+}"
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,description,
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,event_date,"Kerri : 8/09/2025:
+Iterate through all the Legs/legPart of a SGM/SRM/Multi & pick the Start Time of the Latest Event of all.
+
+1. We just have creationDate at SportsMarket Level.
+2. Hence going up 1 level to SportsEvent for the Start Date"
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,future_id,"Bet.SupportingState.Outcome.marketRef
+OR
+SportsMarket.id"
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,future_description,**Will always be blank as per the description
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,match,"Bet.SupportingState.Outcome.eventName
+OR
+SportsEvent.name"
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,price,"IF(bet.state.bets.legType IN (""I"", ""S"")) THEN //EachWay
+{
+	For WIN Leg : bet.state.bets.Leg.LegPart.price.decimal;
+	For PLACE Leg : (fixedOddsPlacePriceNumerator/fixedOddsPlacePriceDenominator) + 1;
+}
+ELSE //Other scenarios
+{
+	bet.state.bets.Leg.LegPart.price.decimal;
+}"
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,sport,"Bet.SupportingState.Outcome.categoryRef
+OR
+SportsCategory.name"
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,result,Same as the component result of Fact_bet_detail
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,prop_type,To be updated by Mayank
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,transaction_date_time,header.timeStamp
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,resolution_date_time,"Select header.timeStamp
+Where bet.state.bets.isSettled = ""true"""
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,transaction_time,header.timeStamp
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,transaction_type,
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,prop_id,"IF(Bet.Leg.LegPart.tags.code=""RC_OC"") THEN
+        Bet.Leg.LegPart.tags.value;"
+gold_cnsm_c360.vw_spectrum_resultedbetstreamprop,prop_price,To be updated by Mayank
